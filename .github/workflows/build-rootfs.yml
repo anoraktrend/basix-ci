@@ -16,6 +16,14 @@ jobs:
     timeout-minutes: 360
     env:
       S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+      S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+      S3_REGION: ${{ secrets.S3_REGION }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.S3_REGION || 'auto' }}
+      AWS_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,21 +38,22 @@ jobs:
 
       - name: Download and verify previous rootfs
         run: |
-          curl -fL -o rootfs-latest.tar.gz.b3 \
-            https://cdn.helltop.net/basix-rootfs-latest.tar.gz.b3
-          curl -fL -o rootfs-latest.tar.gz \
-            https://cdn.helltop.net/basix-rootfs-latest.tar.gz
+          # public CDN blocks datacenter IPs, so pull straight from S3
+          key=$(aws s3 cp --only-show-errors \
+            "s3://$S3_BUCKET/basix/latest-version" - | tr -d '\n')
+          aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key" previous.tar.gz
+          aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key.b3" previous.tar.gz.b3
           # the .b3 carries the dated filename of the tarball it guards
-          file=$(awk 'NR==1 {print $2}' rootfs-latest.tar.gz.b3)
-          mv rootfs-latest.tar.gz "$file"
-          b3sum -c rootfs-latest.tar.gz.b3 || {
+          file=$(awk 'NR==1 {print $2}' previous.tar.gz.b3)
+          mv previous.tar.gz "$file"
+          b3sum -c previous.tar.gz.b3 || {
             echo "checksum mismatch, bailing out"
             exit 1
           }
 
       - name: Extract previous rootfs as buildroot
         run: |
-          file=$(awk 'NR==1 {print $2}' rootfs-latest.tar.gz.b3)
+          file=$(awk 'NR==1 {print $2}' previous.tar.gz.b3)
           sudo mkdir -p buildroot
           sudo tar -xzf "$file" -C buildroot
 
@@ -91,42 +100,40 @@ jobs:
 
       - name: Publish to CDN (S3-compatible)
         if: env.S3_ENDPOINT != ''
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_KEY }}
-          AWS_DEFAULT_REGION: ${{ secrets.S3_REGION || 'auto' }}
-          AWS_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT }}
-          BUCKET: ${{ secrets.S3_BUCKET }}
         run: |
           date=$(date -u +%Y%m%d)
           dir=$(date -u +%Y-%m-%d)
           aws s3 cp --only-show-errors --content-type application/gzip \
             "basix-rootfs-$date.tar.gz" \
-            "s3://$BUCKET/basix/$dir/basix-rootfs-$date.tar.gz"
+            "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz"
           aws s3 cp --only-show-errors \
             "basix-rootfs-$date.tar.gz.b3" \
-            "s3://$BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.b3"
+            "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.b3"
           aws s3 cp --only-show-errors --content-type text/plain \
             "basix-rootfs-$date.tar.gz.packages" \
-            "s3://$BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.packages"
+            "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.packages"
           printf 'basix/%s/basix-rootfs-%s.tar.gz\n' "$dir" "$date" | \
             aws s3 cp --only-show-errors --content-type text/plain - \
-            "s3://$BUCKET/basix/latest-version"
+            "s3://$S3_BUCKET/basix/latest-version"
 
       - name: Verify published latest
         if: env.S3_ENDPOINT != ''
         run: |
-          expected="basix-rootfs-$(date -u +%Y%m%d).tar.gz.b3"
-          for i in $(seq 1 30); do
-            remote=$(curl -fsSL https://cdn.helltop.net/basix-rootfs-latest.tar.gz.b3 || true)
-            if [ "$remote" = "$(cat "$expected")" ]; then
-              echo "CDN is serving the new rootfs"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "CDN did not switch to the new rootfs within 150s" >&2
-          exit 1
+          date=$(date -u +%Y%m%d)
+          dir=$(date -u +%Y-%m-%d)
+          expected="basix-rootfs-$date.tar.gz.b3"
+          key=$(aws s3 cp --only-show-errors \
+            "s3://$S3_BUCKET/basix/latest-version" - | tr -d '\n')
+          [ "$key" = "basix/$dir/basix-rootfs-$date.tar.gz" ] || {
+            echo "CDN pointer not updated: $key" >&2
+            exit 1
+          }
+          aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key.b3" - |
+            diff - "$expected" || {
+            echo "published checksum mismatch" >&2
+            exit 1
+          }
+          echo "CDN is serving the new rootfs"
 
       - name: Cleanup mounts
         if: always()
