@@ -1,35 +1,191 @@
 #!/bin/sh
+# mkrootfs - build a basix rootfs tarball from an existing basix system
 set -eu
 
-ROOT=${1:?usage: mkrootfs <root-dir> [package ...]}
-shift
+: "${BPM:=bpm}"
 
-DEFAULT_PKGS="baselayout musl busybox b3sum bzip2 xz pigz
-              m4 flex bison make binutils gmp mpfr libmpc gcc
-              linux-headers certs openssl curl git baseinit bpm"
+PKGS="baselayout musl busybox b3sum bzip2 xz pigz m4 flex bison make binutils
+      gmp mpfr libmpc gcc linux-headers certs openssl curl git bpm baseinit"
 
-if [ $# -gt 0 ]; then PKGS=$*; else PKGS=$DEFAULT_PKGS; fi
+# installed before anything else so that the files they own are in place
+# before a package with system accounts can create /etc/passwd itself and get
+# the real one preserved as passwd.new
+SEED="baselayout"
 
-: "${BPM_REPOS:=/var/db/bpm/repos/core}"
-: "${BPM_SRC:=/var/db/bpm/src}"
+OUT=
+ROOT=
+COMPRESS=gz
+KEEP=0
+BUILD=1
+HOSTNAME=
 
-command -v bpm >/dev/null || { echo "mkrootfs: bpm is not installed" >&2; exit 1; }
+msg() { printf '=> %s\n' "$*" >&2; }
+sub() { printf '   -> %s\n' "$*" >&2; }
+warn() { printf '=> warning: %s\n' "$*" >&2; }
+die() { printf '=> error: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
 
-mkdir -p "$ROOT"
+# everything runs in its own namespaces, whether or not it has to
+enter_ns() {
+    [ "${MKROOTFS_NS:-0}" = 0 ] || return 0
+    have unshare || die "unshare(1) not found, install util-linux"
 
-echo "=> building into $ROOT"
-# shellcheck disable=SC2086
-BPM_ROOT=$ROOT bpm install $PKGS
+    _u="--mount --pid --fork --ipc --uts --mount-proc"
+    MKROOTFS_USERNS=0
+    if [ "$(id -u)" != 0 ]; then
+        _u="$_u --user --map-root-user"
+        MKROOTFS_USERNS=1
+        msg "not root: using a user namespace"
+    fi
+    MKROOTFS_NS=1
+    export MKROOTFS_NS MKROOTFS_USERNS
 
-# the new system needs the repository and bpms own source to rebuild itself
-echo "=> seeding the repository"
-mkdir -p "$ROOT/var/db/bpm/repos" "$ROOT$BPM_SRC" "$ROOT/var/cache/bpm" "$ROOT/etc/bpm"
-cp -R "${BPM_REPOS%/}" "$ROOT/var/db/bpm/repos/"
-if [ -d "$BPM_SRC" ]; then cp -R "$BPM_SRC/." "$ROOT$BPM_SRC/"; fi
+    # via /bin/sh rather than "$0" so this works whether or not the script
+    # itself is executable
+    # shellcheck disable=SC2086
+    exec unshare $_u -- /bin/sh "$0" "$@"
+}
 
-cat > "$ROOT/etc/bpm/repos.conf" <<EOF
-# <name>  <git url or absolute path>  [branch]
-core      /var/db/bpm/repos/${BPM_REPOS##*/}
+usage() {
+    cat >&2 <<EOF
+usage: ${0##*/} [-o tarball] [-d rootdir] [-c gz|xz|zst|none] [-H hostname]
+                [-f pkglist] [-k] [-n] [pkg...]
+
+  -o  where to write the tarball (default basix-rootfs-<date>.tar.<ext>)
+  -d  directory to assemble in (default a temporary one)
+  -c  compression, default gz
+  -H  write /etc/hostname
+  -f  read the package list from a file, one name or whitespace run per line
+  -k  keep the assembled directory instead of removing it
+  -n  do not build anything, fail if any binary package is missing or stale
+
+With no packages named, the default base set is used:
+$PKGS
 EOF
+    exit "${1:-1}"
+}
 
-echo "=> done. $(BPM_ROOT=$ROOT bpm list | wc -l) packages installed in $ROOT"
+enter_ns "$@"
+
+while getopts o:d:c:H:f:knh _o; do
+    case $_o in
+        o) OUT=$OPTARG ;;
+        d) ROOT=$OPTARG ;;
+        c) COMPRESS=$OPTARG ;;
+        H) HOSTNAME=$OPTARG ;;
+        f) [ -r "$OPTARG" ] || die "cannot read $OPTARG"
+           PKGS=$(sed 's/#.*//' "$OPTARG") ;;
+        k) KEEP=1 ;;
+        n) BUILD=0 ;;
+        h) usage 0 ;;
+        *) usage ;;
+    esac
+done
+shift $((OPTIND - 1))
+[ $# -eq 0 ] || PKGS=$*
+
+have "$BPM" || die "$BPM not found, set BPM= to point at it"
+
+case $COMPRESS in
+    gz) EXT=tar.gz; CFILTER="gzip -c" ;;
+    xz) EXT=tar.xz; CFILTER="xz -c -T0" ;;
+    zst) EXT=tar.zst; CFILTER="zstd -c -T0 -19" ;;
+    none) EXT=tar; CFILTER="cat" ;;
+    *) die "unknown compression: $COMPRESS" ;;
+esac
+have "${CFILTER%% *}" || die "${CFILTER%% *} not found"
+
+: "${OUT:=basix-rootfs-$(date -u +%Y%m%d).$EXT}"
+case $OUT in /*) ;; *) OUT=$PWD/$OUT ;; esac
+
+if [ -n "$ROOT" ]; then
+    mkdir -p "$ROOT"
+    [ -z "$(ls -A "$ROOT" 2>/dev/null)" ] || die "$ROOT is not empty"
+else
+    ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mkrootfs.XXXXXX")
+    trap '[ "$KEEP" = 1 ] || rm -rf "$ROOT"' EXIT INT TERM
+fi
+case $ROOT in /*) ;; *) ROOT=$PWD/$ROOT ;; esac
+
+msg "assembling in $ROOT"
+
+if [ "$BUILD" = 1 ]; then
+    msg "building any packages that are missing or stale"
+    # deliberately with the hosts root, so that what is already installed here
+    # is irrelevant to what gets built
+    # shellcheck disable=SC2086
+    BPM_ROOT=/ "$BPM" build $PKGS
+else
+    # bpm install builds whatever it is missing, which -n exists to prevent, so
+    # the closure has to be checked before a single package is installed
+    msg "checking that every package already has a binary package"
+    _missing=""
+    # shellcheck disable=SC2086
+    for _p in $(closure $PKGS); do
+        _v=$(query "$_p" version)-$(query "$_p" revision)
+        set -- "$BPM_CACHE/bin/$_p@$_v".tar.*
+        [ -f "$1" ] || _missing="$_missing $_p-$_v"
+    done
+    [ -z "$_missing" ] || die "no binary package for:$_missing"
+    sub "all present"
+fi
+
+for d in dev proc sys run tmp var/tmp etc root usr/bin var/db/bpm/installed; do
+    mkdir -p "$ROOT/$d"
+done
+chmod 1777 "$ROOT/tmp" "$ROOT/var/tmp"
+chmod 0700 "$ROOT/root"
+
+install_pkgs() {
+    [ $# -gt 0 ] || return 0
+    BPM_ROOT=$ROOT "$BPM" install "$@"
+}
+
+_seed=""
+_rest=""
+for _p in $PKGS; do
+    _is_seed=0
+    for _s in $SEED; do [ "$_p" = "$_s" ] && _is_seed=1; done
+    if [ "$_is_seed" = 1 ]; then _seed="$_seed $_p"; else _rest="$_rest $_p"; fi
+done
+
+if [ -n "$_seed" ]; then
+    msg "installing the seed packages first:$_seed"
+    # shellcheck disable=SC2086
+    install_pkgs $_seed
+fi
+# shellcheck disable=SC2086
+install_pkgs $_rest
+
+_dev=$(find "$ROOT" \( -type c -o -type b \) -print 2>/dev/null | head -5)
+if [ -n "$_dev" ]; then
+    warn "device nodes present, unpacking this will need root:"
+    printf '%s\n' "$_dev" | sed "s|^$ROOT|   |" >&2
+fi
+
+[ -z "$HOSTNAME" ] || printf '%s\n' "$HOSTNAME" > "$ROOT/etc/hostname"
+
+# whatever the build left behind, the target has its own package database and
+rm -rf "$ROOT/var/cache/bpm/build" "$ROOT/var/cache/bpm/dest" \
+       "$ROOT/var/cache/bpm/tmp" "$ROOT/var/cache/bpm/logs"
+
+_n=$(ls "$ROOT/var/db/bpm/installed" 2>/dev/null | wc -l)
+[ "$_n" -gt 0 ] || die "nothing was installed"
+msg "$_n packages, $(du -sh "$ROOT" | cut -f1) on disk"
+
+msg "writing $OUT"
+( cd "$ROOT" && tar cf - --numeric-owner . ) | $CFILTER > "$OUT"
+
+: > "$OUT.packages"
+for d in "$ROOT/var/db/bpm/installed"/*/; do
+    _p=${d%/}; _p=${_p##*/}
+    printf '%s %s\n' "$_p" "$(cat "$d/version" 2>/dev/null || echo '?')" >> "$OUT.packages"
+done
+
+if have b3sum; then
+    ( cd "${OUT%/*}" && b3sum "${OUT##*/}" > "${OUT##*/}.b3" )
+    sub "blake3 $(cut -d' ' -f1 < "$OUT.b3")"
+fi
+
+msg "done: $OUT ($(du -h "$OUT" | cut -f1))"
+[ "$KEEP" = 0 ] || msg "root kept at $ROOT"

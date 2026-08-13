@@ -59,36 +59,44 @@ jobs:
 
       - name: Seed repo into the buildroot
         run: |
-          sudo mkdir -p buildroot/ci
+          sudo mkdir -p buildroot/ci/out buildroot/var/cache/bpm/bin
+          # mkrootfs re-execs itself via /bin/sh, which this rootfs lacks
+          sudo ln -sfn ../usr/bin/sh buildroot/bin/sh
           sudo cp -R bpm basix-packages buildroot/ci/
           sudo cp mkrootfs buildroot/ci/
           # the chroot needs working DNS to fetch dist_files
           sudo cp /etc/resolv.conf buildroot/etc/resolv.conf
+
+      - name: Restore bpm binary package cache
+        uses: actions/cache/restore@v4
+        with:
+          path: buildroot/var/cache/bpm/bin
+          key: bpm-cache-v1
 
       - name: Build new rootfs with mkrootfs
         run: |
           sudo mount --bind /proc buildroot/proc
           sudo mount --bind /dev buildroot/dev
           sudo mount --bind /sys buildroot/sys
+          d=$(date -u +%Y%m%d)
           sudo chroot buildroot /usr/bin/sh -c '
             BPM_REPOS=/ci/basix-packages \
             BPM_SRC=/ci/bpm \
-            /ci/mkrootfs /newrootfs'
+            /ci/mkrootfs -d /newrootfs -o /ci/out/basix-rootfs-$d.tar.gz'
 
-      - name: Verify installed packages
+      - name: Retrieve artifacts from buildroot
         run: |
-          sudo chroot buildroot /usr/bin/sh -c '
-            BPM_ROOT=/newrootfs bpm list'
-
-      - name: Package rootfs
-        run: |
-          date=$(date -u +%Y%m%d)
-          sudo tar --numeric-owner -czf "basix-rootfs-$date.tar.gz" \
-            -C buildroot/newrootfs .
-          b3sum "basix-rootfs-$date.tar.gz" > "basix-rootfs-$date.tar.gz.b3"
-          sudo chroot buildroot /usr/bin/sh -c 'BPM_ROOT=/newrootfs bpm list' \
-            > "basix-rootfs-$date.tar.gz.packages"
+          d=$(date -u +%Y%m%d)
+          sudo cp "buildroot/ci/out/basix-rootfs-$d.tar.gz" \
+                  "buildroot/ci/out/basix-rootfs-$d.tar.gz.b3" \
+                  "buildroot/ci/out/basix-rootfs-$d.tar.gz.packages" .
           ls -lh basix-rootfs-*
+
+      - name: Save bpm binary package cache
+        uses: actions/cache/save@v4
+        with:
+          path: buildroot/var/cache/bpm/bin
+          key: bpm-cache-v1
 
       - uses: actions/upload-artifact@v4
         with:
