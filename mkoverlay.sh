@@ -20,6 +20,11 @@ trap 'rm -rf "$TMP"' EXIT
 # pkg => mirror url template. ${version} is substituted; extra bash syntax is
 # allowed (binutils tag names use underscores). GitHub codeload serves the
 # exact release tag tree; ftpmirror.gnu.org geolocates to a fast nearby host.
+#
+# bpm is special: it builds from its own upstream tag, but must carry our
+# lib/common.sh fix (refetch cached sources that fail checksum) into the
+# rootfs, so the overlay splices a do_patch that copies files/lib/common.sh
+# over the upstream one.
 PATCHES="\
 gcc|https://codeload.github.com/gcc-mirror/gcc/tar.gz/refs/tags/releases/gcc-\${version}
 binutils|https://codeload.github.com/gnutools/binutils-gdb/tar.gz/refs/tags/binutils-\${version//./_}
@@ -28,7 +33,10 @@ mpfr|https://ftpmirror.gnu.org/gnu/mpfr/mpfr-\${version}.tar.xz
 libmpc|https://ftpmirror.gnu.org/gnu/mpc/mpc-\${version}.tar.gz
 m4|https://ftpmirror.gnu.org/gnu/m4/m4-\${version}.tar.xz
 make|https://ftpmirror.gnu.org/gnu/make/make-\${version}.tar.gz
-bison|https://ftpmirror.gnu.org/gnu/bison/bison-\${version}.tar.xz"
+bison|https://ftpmirror.gnu.org/gnu/bison/bison-\${version}.tar.xz
+zlib|https://github.com/madler/zlib/releases/download/v\${version}/zlib-\${version}.tar.gz
+pigz|https://codeload.github.com/madler/pigz/tar.gz/refs/tags/v\${version}
+bpm|https://github.com/kkrruumm/bpm/archive/refs/tags/\${version}.tar.gz"
 
 check_sync() {
     dir=$1
@@ -46,6 +54,12 @@ check_sync() {
             fi
         done
         grep -qE '^checksum=' "$ov" || { echo "STALE: $pkg missing checksum"; return 1; }
+        if [ "$pkg" = bpm ]; then
+            [ -f "$dir/$pkg/files/lib/common.sh" ] || {
+                echo "STALE: bpm missing files/lib/common.sh"; return 1; }
+            grep -q '^do_patch()' "$ov" || {
+                echo "STALE: bpm missing do_patch"; return 1; }
+        fi
         echo "ok: $pkg"
     done
     return 0
@@ -69,6 +83,17 @@ gen() {
             /^checksum=/  { print "checksum=\"" sum "\""; next }
             { print }
         ' "$up" > "$ODIR/$pkg/template"
+        case $pkg in
+            bpm)
+                # ship our patched lib/common.sh (see above) and splice the
+                # do_patch that applies it on top of the upstream tarball
+                mkdir -p "$ODIR/$pkg/files/lib"
+                cp "$(dirname "$0")/bpm/lib/common.sh" "$ODIR/$pkg/files/lib/common.sh"
+                cat >> "$ODIR/$pkg/template" <<'EOF'
+do_patch() { cp "$FILESDIR/lib/common.sh" lib/common.sh; }
+EOF
+                ;;
+        esac
     done
 }
 

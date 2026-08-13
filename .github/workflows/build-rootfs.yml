@@ -75,7 +75,13 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: buildroot/var/cache/bpm/bin
-          key: bpm-cache-v1
+          key: bpm-cache-v2
+
+      - name: Restore bpm source tarball cache
+        uses: actions/cache/restore@v5
+        with:
+          path: buildroot/var/cache/bpm/sources
+          key: bpm-src-v2-${{ hashFiles('overlay/**') }}
 
       - name: Build new rootfs with mkrootfs
         run: |
@@ -103,7 +109,13 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: buildroot/var/cache/bpm/bin
-          key: bpm-cache-v1
+          key: bpm-cache-v2
+
+      - name: Save bpm source tarball cache
+        uses: actions/cache/save@v5
+        with:
+          path: buildroot/var/cache/bpm/sources
+          key: bpm-src-v2-${{ hashFiles('overlay/**') }}
 
       - uses: actions/upload-artifact@v5
         with:
