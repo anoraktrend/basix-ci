@@ -1,0 +1,134 @@
+name: build-rootfs
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: build-rootfs
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install b3sum if missing
+        run: |
+          command -v b3sum || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq b3sum
+          }
+
+      - name: Download and verify previous rootfs
+        run: |
+          curl -fL -o rootfs-latest.tar.gz.b3 \
+            https://cdn.helltop.net/basix-rootfs-latest.tar.gz.b3
+          curl -fL -o rootfs-latest.tar.gz \
+            https://cdn.helltop.net/basix-rootfs-latest.tar.gz
+          # the .b3 carries the dated filename of the tarball it guards
+          file=$(awk 'NR==1 {print $2}' rootfs-latest.tar.gz.b3)
+          mv rootfs-latest.tar.gz "$file"
+          b3sum -c rootfs-latest.tar.gz.b3 || {
+            echo "checksum mismatch, bailing out"
+            exit 1
+          }
+
+      - name: Extract previous rootfs as buildroot
+        run: |
+          file=$(awk 'NR==1 {print $2}' rootfs-latest.tar.gz.b3)
+          sudo mkdir -p buildroot
+          sudo tar -xzf "$file" -C buildroot
+
+      - name: Seed repo into the buildroot
+        run: |
+          sudo mkdir -p buildroot/ci
+          sudo cp -R bpm basix-packages buildroot/ci/
+          sudo cp mkrootfs buildroot/ci/
+          # the chroot needs working DNS to fetch dist_files
+          sudo cp /etc/resolv.conf buildroot/etc/resolv.conf
+
+      - name: Build new rootfs with mkrootfs
+        run: |
+          sudo mount --bind /proc buildroot/proc
+          sudo mount --bind /dev buildroot/dev
+          sudo mount --bind /sys buildroot/sys
+          sudo chroot buildroot /usr/bin/sh -c '
+            BPM_REPOS=/ci/basix-packages \
+            BPM_SRC=/ci/bpm \
+            /ci/mkrootfs /newrootfs'
+
+      - name: Verify installed packages
+        run: |
+          sudo chroot buildroot /usr/bin/sh -c '
+            BPM_ROOT=/newrootfs bpm list'
+
+      - name: Package rootfs
+        run: |
+          date=$(date -u +%Y%m%d)
+          sudo tar --numeric-owner -czf "basix-rootfs-$date.tar.gz" \
+            -C buildroot/newrootfs .
+          b3sum "basix-rootfs-$date.tar.gz" > "basix-rootfs-$date.tar.gz.b3"
+          sudo chroot buildroot /usr/bin/sh -c 'BPM_ROOT=/newrootfs bpm list' \
+            > "basix-rootfs-$date.tar.gz.packages"
+          ls -lh basix-rootfs-*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: basix-rootfs
+          path: |
+            basix-rootfs-*.tar.gz
+            basix-rootfs-*.tar.gz.b3
+            basix-rootfs-*.tar.gz.packages
+
+      - name: Publish to CDN (S3-compatible)
+        if: ${{ secrets.S3_ENDPOINT != '' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.S3_REGION || 'auto' }}
+          AWS_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT }}
+          BUCKET: ${{ secrets.S3_BUCKET }}
+        run: |
+          date=$(date -u +%Y%m%d)
+          dir=$(date -u +%Y-%m-%d)
+          aws s3 cp --only-show-errors --content-type application/gzip \
+            "basix-rootfs-$date.tar.gz" \
+            "s3://$BUCKET/basix/$dir/basix-rootfs-$date.tar.gz"
+          aws s3 cp --only-show-errors \
+            "basix-rootfs-$date.tar.gz.b3" \
+            "s3://$BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.b3"
+          aws s3 cp --only-show-errors --content-type text/plain \
+            "basix-rootfs-$date.tar.gz.packages" \
+            "s3://$BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.packages"
+          printf 'basix/%s/basix-rootfs-%s.tar.gz\n' "$dir" "$date" | \
+            aws s3 cp --only-show-errors --content-type text/plain - \
+            "s3://$BUCKET/basix/latest-version"
+
+      - name: Verify published latest
+        if: ${{ secrets.S3_ENDPOINT != '' }}
+        run: |
+          expected="basix-rootfs-$(date -u +%Y%m%d).tar.gz.b3"
+          for i in $(seq 1 30); do
+            remote=$(curl -fsSL https://cdn.helltop.net/basix-rootfs-latest.tar.gz.b3 || true)
+            if [ "$remote" = "$(cat "$expected")" ]; then
+              echo "CDN is serving the new rootfs"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "CDN did not switch to the new rootfs within 150s" >&2
+          exit 1
+
+      - name: Cleanup mounts
+        if: always()
+        run: |
+          sudo umount buildroot/proc 2>/dev/null || true
+          sudo umount buildroot/dev 2>/dev/null || true
+          sudo umount buildroot/sys 2>/dev/null || true

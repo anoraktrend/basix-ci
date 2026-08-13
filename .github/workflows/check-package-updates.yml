@@ -1,0 +1,81 @@
+name: check-package-updates
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      PACKAGES: >
+        b3sum baseinit baselayout binutils bison bpm busybox bzip2 certs
+        curl flex gcc git gmp libmpc linux-headers m4 make mpfr musl
+        openssl perl pigz xz zlib
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare pinned vs upstream
+        id: upstream
+        run: |
+          upstream=$(git ls-remote https://github.com/kkrruumm/basix-packages refs/heads/main | cut -f1)
+          pinned=$(git ls-tree HEAD basix-packages | awk '{print $3}')
+          echo "upstream=${upstream}"
+          echo "pinned=${pinned}"
+          echo "upstream=${upstream}" >> "$GITHUB_OUTPUT"
+          echo "pinned=${pinned}" >> "$GITHUB_OUTPUT"
+
+      - name: Core packages changed?
+        id: relevant
+        if: steps.upstream.outputs.upstream != steps.upstream.outputs.pinned
+        run: |
+          git submodule update --init --remote -- basix-packages
+          changed=$(git -C basix-packages diff --name-only \
+            ${{ steps.upstream.outputs.pinned }}..HEAD -- $PACKAGES) || true
+          if [ -n "$changed" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "changed packages:"
+            printf '%s\n' "$changed" | sed 's#/.*##' | sort -u
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "no core package updates"
+          fi
+
+      - name: Bump submodule
+        if: steps.relevant.outputs.changed == 'true'
+        run: |
+          names=$(git -C basix-packages diff --name-only \
+            ${{ steps.upstream.outputs.pinned }}..HEAD -- $PACKAGES \
+            | sed 's#/.*##' | sort -u | tr '\n' ' ')
+          git add basix-packages
+          git -c user.name="basix-ci" \
+              -c user.email="basix-ci@users.noreply.github.com" \
+              commit -m "basix-packages: update $names"
+          git push
+
+      - name: Trigger rootfs build
+        if: steps.relevant.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh workflow view build-rootfs.yml >/dev/null 2>&1; then
+            gh workflow run build-rootfs.yml
+          else
+            echo "build-rootfs.yml not defined yet; skipping trigger"
+          fi
+
+      - name: Summary
+        run: |
+          pinned=${{ steps.upstream.outputs.pinned }}
+          upstream=${{ steps.upstream.outputs.upstream }}
+          if [ "$upstream" = "$pinned" ]; then
+            echo "basix-packages is up to date at $pinned"
+          elif [ "${{ steps.relevant.outputs.changed }}" = "true" ]; then
+            echo "core package update: $pinned -> $upstream; submodule bumped, build triggered"
+          else
+            echo "upstream moved ($pinned -> $upstream) but no core packages changed; skipping"
+          fi

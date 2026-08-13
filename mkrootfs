@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+ROOT=${1:?usage: mkrootfs <root-dir> [package ...]}
+shift
+
+DEFAULT_PKGS="baselayout musl busybox b3sum bzip2 xz pigz
+              m4 flex bison make binutils gmp mpfr libmpc gcc
+              linux-headers certs openssl curl git baseinit bpm"
+
+if [ $# -gt 0 ]; then PKGS=$*; else PKGS=$DEFAULT_PKGS; fi
+
+: "${BPM_REPOS:=/var/db/bpm/repos/core}"
+: "${BPM_SRC:=/var/db/bpm/src}"
+
+command -v bpm >/dev/null || { echo "mkrootfs: bpm is not installed" >&2; exit 1; }
+
+mkdir -p "$ROOT"
+
+echo "=> building into $ROOT"
+# shellcheck disable=SC2086
+BPM_ROOT=$ROOT bpm install $PKGS
+
+# the new system needs the repository and bpms own source to rebuild itself
+echo "=> seeding the repository"
+mkdir -p "$ROOT/var/db/bpm/repos" "$ROOT$BPM_SRC" "$ROOT/var/cache/bpm" "$ROOT/etc/bpm"
+cp -R "${BPM_REPOS%/}" "$ROOT/var/db/bpm/repos/"
+if [ -d "$BPM_SRC" ]; then cp -R "$BPM_SRC/." "$ROOT$BPM_SRC/"; fi
+
+cat > "$ROOT/etc/bpm/repos.conf" <<EOF
+# <name>  <git url or absolute path>  [branch]
+core      /var/db/bpm/repos/${BPM_REPOS##*/}
+EOF
+
+echo "=> done. $(BPM_ROOT=$ROOT bpm list | wc -l) packages installed in $ROOT"

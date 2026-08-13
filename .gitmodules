@@ -1,0 +1,7 @@
+[submodule "bpm"]
+	path = bpm
+	url = https://github.com/kkrruumm/bpm
+[submodule "basix-packages"]
+	path = basix-packages
+	url = https://github.com/kkrruumm/basix-packages
+	branch = main
