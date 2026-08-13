@@ -60,8 +60,9 @@ jobs:
       - name: Seed repo into the buildroot
         run: |
           sudo mkdir -p buildroot/ci/out buildroot/var/cache/bpm/bin
-          # mkrootfs re-execs itself via /bin/sh, which this rootfs lacks
-          sudo ln -sfn ../usr/bin/sh buildroot/bin/sh
+          # this rootfs has no sh links at all, only /usr/bin/busybox
+          sudo ln -sfn ../usr/bin/busybox buildroot/bin/sh
+          sudo ln -sfn busybox buildroot/usr/bin/sh
           sudo cp -R bpm basix-packages buildroot/ci/
           sudo cp mkrootfs buildroot/ci/
           # the chroot needs working DNS to fetch dist_files
@@ -75,13 +76,16 @@ jobs:
 
       - name: Build new rootfs with mkrootfs
         run: |
+          # self-bind so / is a mountpoint and unshare can set propagation
+          sudo mount --bind buildroot buildroot
           sudo mount --bind /proc buildroot/proc
           sudo mount --bind /dev buildroot/dev
           sudo mount --bind /sys buildroot/sys
           d=$(date -u +%Y%m%d)
-          sudo chroot buildroot /usr/bin/sh -c '
+          sudo chroot buildroot /bin/sh -c '
             BPM_REPOS=/ci/basix-packages \
             BPM_SRC=/ci/bpm \
+            BPM_BUILDROOT= \
             /ci/mkrootfs -d /newrootfs -o /ci/out/basix-rootfs-$d.tar.gz'
 
       - name: Retrieve artifacts from buildroot
@@ -149,3 +153,4 @@ jobs:
           sudo umount buildroot/proc 2>/dev/null || true
           sudo umount buildroot/dev 2>/dev/null || true
           sudo umount buildroot/sys 2>/dev/null || true
+          sudo umount buildroot 2>/dev/null || true
