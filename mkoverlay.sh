@@ -21,16 +21,17 @@ case $BROOT in /*) ;; *) BROOT=$PWD/$BROOT ;; esac
 case $ODIR in /*) ;; *) ODIR=$PWD/$ODIR ;; esac
 
 # pkg => mirror url template. ${version} is substituted; extra bash syntax is
-# allowed (binutils tag names use underscores). GitHub codeload serves the
-# exact release tag tree; ftpmirror.gnu.org geolocates to a fast nearby host.
+# allowed (binutils tag names use underscores). GitHub /archive/ endpoints
+# serve the exact release tag tree and keep a .tar.gz basename (bpm decides
+# how to extract a dist by its filename); ftpmirror.gnu.org geolocates to a
+# fast nearby host.
 #
-# bpm is special: it builds from its own upstream tag, but must carry our
-# lib/common.sh fix (refetch cached sources that fail checksum) into the
-# rootfs, so the overlay splices a do_patch that copies files/lib/common.sh
-# over the upstream one.
+# bpm itself is not overlaid: the rootfs ships the pristine upstream package.
+# The CI runs on a patched build of it instead, generated separately with
+# --ci-bpm (patches/bpm-common.sh.patch applied on top of the upstream tag).
 PATCHES="\
-gcc|https://codeload.github.com/gcc-mirror/gcc/tar.gz/refs/tags/releases/gcc-\${version}
-binutils|https://codeload.github.com/gnutools/binutils-gdb/tar.gz/refs/tags/binutils-\${version//./_}
+gcc|https://github.com/gcc-mirror/gcc/archive/refs/tags/releases/gcc-\${version}.tar.gz
+binutils|https://github.com/gnutools/binutils-gdb/archive/refs/tags/binutils-\${version//./_}.tar.gz
 gmp|https://ftpmirror.gnu.org/gnu/gmp/gmp-\${version}.tar.xz
 mpfr|https://ftpmirror.gnu.org/gnu/mpfr/mpfr-\${version}.tar.xz
 libmpc|https://ftpmirror.gnu.org/gnu/mpc/mpc-\${version}.tar.gz
@@ -38,9 +39,8 @@ m4|https://ftpmirror.gnu.org/gnu/m4/m4-\${version}.tar.xz
 make|https://ftpmirror.gnu.org/gnu/make/make-\${version}.tar.gz
 bison|https://ftpmirror.gnu.org/gnu/bison/bison-\${version}.tar.xz
 zlib|https://github.com/madler/zlib/releases/download/v\${version}/zlib-\${version}.tar.gz
-pigz|https://codeload.github.com/madler/pigz/tar.gz/refs/tags/v\${version}
-bpm|https://github.com/kkrruumm/bpm/archive/refs/tags/\${version}.tar.gz
-musl|https://codeload.github.com/ifduyue/musl/tar.gz/refs/tags/v\${version}"
+pigz|https://github.com/madler/pigz/archive/refs/tags/v\${version}.tar.gz
+musl|https://github.com/ifduyue/musl/archive/refs/tags/v\${version}.tar.gz"
 
 check_sync() {
     dir=$1
@@ -58,14 +58,10 @@ check_sync() {
             fi
         done
         grep -qE '^checksum=' "$ov" || { echo "STALE: $pkg missing checksum"; return 1; }
-        if [ "$pkg" = bpm ]; then
-            [ -f "$dir/$pkg/files/common.sh.patch" ] || {
-                echo "STALE: bpm missing files/common.sh.patch"; return 1; }
-            grep -q '^do_patch()' "$ov" || {
-                echo "STALE: bpm missing do_patch"; return 1; }
-        fi
         echo "ok: $pkg"
     done
+    [ -f "$(dirname "$0")/patches/bpm-common.sh.patch" ] || {
+        echo "STALE: patches/bpm-common.sh.patch missing"; return 1; }
     return 0
 }
 
@@ -87,29 +83,32 @@ gen() {
             /^checksum=/  { print "checksum=\"" sum "\""; next }
             { print }
         ' "$up" > "$ODIR/$pkg/template"
-        case $pkg in
-            bpm)
-                # the patch itself is committed in the overlay as
-                # files/common.sh.patch; regenerate the patched file from the
-                # upstream tarball already downloaded for checksumming, so
-                # nothing depends on a vendored checkout. If the upstream
-                # tree drifts so the patch no longer applies, this fails loud.
-                mkdir -p "$ODIR/$pkg/files/lib"
-                _src=$pkg-$version
-                tar -xzf "$f" -C "$TMP" "$_src/lib/common.sh"
-                ( cd "$TMP/$_src" && patch -s -p1 \
-                    < "$ODIR/$pkg/files/common.sh.patch" )
-                cp "$TMP/$_src/lib/common.sh" \
-                   "$ODIR/$pkg/files/lib/common.sh"
-                cat >> "$ODIR/$pkg/template" <<'EOF'
-do_patch() { cp "$FILESDIR/lib/common.sh" lib/common.sh; }
-EOF
-                ;;
-        esac
     done
+}
+
+# --ci-bpm <dir> - materialize a patched bpm tree for the CI to run the build
+# with. The rootfs itself keeps the pristine upstream bpm package; only the
+# build is driven by this one. The patch (patches/bpm-common.sh.patch, the
+# cached-source self-heal) is applied on top of the upstream tag tarball, so
+# it fails loud if upstream drifts.
+ci_bpm() {
+    out=$1
+    up=$BROOT/bpm/template
+    version=$(grep -E '^version=' "$up" | tail -1 | cut -d= -f2)
+    url_str="https://github.com/kkrruumm/bpm/archive/refs/tags/$version.tar.gz"
+    echo "== ci-bpm $version: $url_str"
+    f=$TMP/bpm.tar.gz
+    curl -fL --retry 3 --retry-delay 2 -m 900 -o "$f" "$url_str"
+    tar -xzf "$f" -C "$TMP"
+    mkdir -p "$out"
+    ( cd "$TMP/bpm-$version" && patch -s -p1 < "$(dirname "$0")/patches/bpm-common.sh.patch" )
+    cp -R "$TMP/bpm-$version/." "$out/"
+    [ -f "$out/bpm" ] && [ -d "$out/lib/style" ] || {
+        echo "ci-bpm tree incomplete in $out"; exit 1; }
 }
 
 case ${1:-gen} in
     --check) check_sync "$ODIR" ;;
+    --ci-bpm) ci_bpm "${2:?usage: mkoverlay.sh --ci-bpm <dir>}" ;;
     *) gen ;;
 esac
