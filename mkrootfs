@@ -3,6 +3,10 @@
 set -eu
 
 : "${BPM:=bpm}"
+# overlay first: the first repo providing a template wins, so a sibling
+# mirror-overlay shadows basix-packages. $0 is /ci/mkrootfs in the CI chroot,
+# where both repos live beside it; override with BPM_REPOS for anything else.
+: "${BPM_REPOS:=$(dirname "$0")/overlay $(dirname "$0")/basix-packages}"
 
 PKGS="baselayout musl busybox b3sum bzip2 xz pigz m4 flex bison make binutils
       gmp mpfr libmpc gcc linux-headers certs openssl curl git bpm baseinit"

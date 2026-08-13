@@ -51,6 +51,16 @@ jobs:
           names=$(git -C basix-packages diff --name-only \
             ${{ steps.upstream.outputs.pinned }}..HEAD -- $PACKAGES \
             | sed 's#/.*##' | sort -u | tr '\n' ' ')
+          # regenerate the mirror overlay if any of its packages changed
+          if git -C basix-packages diff --name-only \
+            ${{ steps.upstream.outputs.pinned }}..HEAD -- \
+              gcc binutils gmp mpfr libmpc m4 make bison | grep -q .; then
+            curl -fsSL -o /usr/local/bin/b3sum \
+              https://github.com/BLAKE3-team/BLAKE3/releases/download/1.8.6/b3sum_linux_x64_bin
+            chmod +x /usr/local/bin/b3sum
+            ./mkoverlay.sh
+            git add overlay
+          fi
           git add basix-packages
           git -c user.name="basix-ci" \
               -c user.email="basix-ci@users.noreply.github.com" \

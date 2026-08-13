@@ -57,13 +57,16 @@ jobs:
           sudo mkdir -p buildroot
           sudo tar -xzf "$file" -C buildroot
 
+      - name: Verify mirror overlay is in sync
+        run: ./mkoverlay.sh --check
+
       - name: Seed repo into the buildroot
         run: |
           sudo mkdir -p buildroot/ci/out buildroot/var/cache/bpm/bin
           # this rootfs has no sh links at all, only /usr/bin/busybox
           sudo ln -sfn ../usr/bin/busybox buildroot/bin/sh
           sudo ln -sfn busybox buildroot/usr/bin/sh
-          sudo cp -R bpm basix-packages buildroot/ci/
+          sudo cp -R bpm basix-packages overlay buildroot/ci/
           sudo cp mkrootfs buildroot/ci/
           # the chroot needs working DNS to fetch dist_files
           sudo cp /etc/resolv.conf buildroot/etc/resolv.conf
@@ -83,7 +86,7 @@ jobs:
           sudo mount --bind /sys buildroot/sys
           d=$(date -u +%Y%m%d)
           sudo chroot buildroot /bin/sh -c '
-            BPM_REPOS=/ci/basix-packages \
+            BPM_REPOS="/ci/overlay /ci/basix-packages" \
             BPM_SRC=/ci/bpm \
             BPM_BUILDROOT= \
             /ci/mkrootfs -d /newrootfs -o /ci/out/basix-rootfs-$d.tar.gz'
