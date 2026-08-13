@@ -17,7 +17,7 @@ jobs:
         curl flex gcc git gmp libmpc linux-headers m4 make mpfr musl
         openssl perl pigz xz zlib
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Compare pinned vs upstream
         id: upstream
