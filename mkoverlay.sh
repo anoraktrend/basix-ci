@@ -39,7 +39,8 @@ make|https://ftpmirror.gnu.org/gnu/make/make-\${version}.tar.gz
 bison|https://ftpmirror.gnu.org/gnu/bison/bison-\${version}.tar.xz
 zlib|https://github.com/madler/zlib/releases/download/v\${version}/zlib-\${version}.tar.gz
 pigz|https://codeload.github.com/madler/pigz/tar.gz/refs/tags/v\${version}
-bpm|https://github.com/kkrruumm/bpm/archive/refs/tags/\${version}.tar.gz"
+bpm|https://github.com/kkrruumm/bpm/archive/refs/tags/\${version}.tar.gz
+musl|https://codeload.github.com/ifduyue/musl/tar.gz/refs/tags/v\${version}"
 
 check_sync() {
     dir=$1
