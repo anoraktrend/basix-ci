@@ -16,6 +16,9 @@ ODIR=${ODIR:-$(dirname "$0")/overlay}
 TMP=${TMP:-$(mktemp -d)}
 export TMP
 trap 'rm -rf "$TMP"' EXIT
+# absolute, since the bpm patch is applied from inside a subshell that cd's
+case $BROOT in /*) ;; *) BROOT=$PWD/$BROOT ;; esac
+case $ODIR in /*) ;; *) ODIR=$PWD/$ODIR ;; esac
 
 # pkg => mirror url template. ${version} is substituted; extra bash syntax is
 # allowed (binutils tag names use underscores). GitHub codeload serves the
@@ -55,8 +58,8 @@ check_sync() {
         done
         grep -qE '^checksum=' "$ov" || { echo "STALE: $pkg missing checksum"; return 1; }
         if [ "$pkg" = bpm ]; then
-            [ -f "$dir/$pkg/files/lib/common.sh" ] || {
-                echo "STALE: bpm missing files/lib/common.sh"; return 1; }
+            [ -f "$dir/$pkg/files/common.sh.patch" ] || {
+                echo "STALE: bpm missing files/common.sh.patch"; return 1; }
             grep -q '^do_patch()' "$ov" || {
                 echo "STALE: bpm missing do_patch"; return 1; }
         fi
@@ -85,10 +88,18 @@ gen() {
         ' "$up" > "$ODIR/$pkg/template"
         case $pkg in
             bpm)
-                # ship our patched lib/common.sh (see above) and splice the
-                # do_patch that applies it on top of the upstream tarball
+                # the patch itself is committed in the overlay as
+                # files/common.sh.patch; regenerate the patched file from the
+                # upstream tarball already downloaded for checksumming, so
+                # nothing depends on a vendored checkout. If the upstream
+                # tree drifts so the patch no longer applies, this fails loud.
                 mkdir -p "$ODIR/$pkg/files/lib"
-                cp "$(dirname "$0")/bpm/lib/common.sh" "$ODIR/$pkg/files/lib/common.sh"
+                _src=$pkg-$version
+                tar -xzf "$f" -C "$TMP" "$_src/lib/common.sh"
+                ( cd "$TMP/$_src" && patch -s -p1 \
+                    < "$ODIR/$pkg/files/common.sh.patch" )
+                cp "$TMP/$_src/lib/common.sh" \
+                   "$ODIR/$pkg/files/lib/common.sh"
                 cat >> "$ODIR/$pkg/template" <<'EOF'
 do_patch() { cp "$FILESDIR/lib/common.sh" lib/common.sh; }
 EOF
