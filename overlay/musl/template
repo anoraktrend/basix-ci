@@ -5,7 +5,7 @@ build_style=configure
 short_desc="musl libc"
 home_page="https://musl.libc.org"
 license="MIT"
-dist_files="https://codeload.github.com/ifduyue/musl/tar.gz/refs/tags/v1.2.6"
+dist_files="https://github.com/ifduyue/musl/archive/refs/tags/v1.2.6.tar.gz"
 checksum="6d1693237e919e2f1827a0108ef4330340230329a1c4ac2cf3d42dbfdd839a9f"
 configure_args="--syslibdir=/usr/lib"
 

@@ -58,6 +58,10 @@ check_sync() {
             fi
         done
         grep -qE '^checksum=' "$ov" || { echo "STALE: $pkg missing checksum"; return 1; }
+        if [ -d "$BROOT/$pkg/files" ] && [ ! -d "$dir/$pkg/files" ]; then
+            echo "STALE: $pkg missing files/ (FILESDIR would be empty)"
+            return 1
+        fi
         echo "ok: $pkg"
     done
     [ -f "$(dirname "$0")/patches/bpm-common.sh.patch" ] || {
@@ -83,6 +87,12 @@ gen() {
             /^checksum=/  { print "checksum=\"" sum "\""; next }
             { print }
         ' "$up" > "$ODIR/$pkg/template"
+        # the overlay shadows the package dir wholesale, so templates whose
+        # build needs $FILESDIR get the upstream files/ copied along
+        if [ -d "$BROOT/$pkg/files" ]; then
+            rm -rf "$ODIR/$pkg/files"
+            cp -R "$BROOT/$pkg/files" "$ODIR/$pkg/files"
+        fi
     done
 }
 
