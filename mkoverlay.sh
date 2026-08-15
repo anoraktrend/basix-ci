@@ -58,6 +58,13 @@ check_sync() {
             fi
         done
         grep -qE '^checksum=' "$ov" || { echo "STALE: $pkg missing checksum"; return 1; }
+        _df=$(grep -E '^dist_files=' "$ov" | tail -1 | sed 's/^dist_files="//;s/"$//')
+        case $_df in
+            *.tar.gz|*.tar.xz|*.tar.bz2|*.tgz|*.txz|*.zip|git+*) ;;
+            *)
+                echo "STALE: $pkg dist_files has no archive extension (bpm would cp it raw): $_df"
+                return 1 ;;
+        esac
         if [ -d "$BROOT/$pkg/files" ] && [ ! -d "$dir/$pkg/files" ]; then
             echo "STALE: $pkg missing files/ (FILESDIR would be empty)"
             return 1
