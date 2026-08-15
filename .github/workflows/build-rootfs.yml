@@ -98,18 +98,13 @@ jobs:
           sudo mount --bind /dev buildroot/dev
           sudo mount --bind /sys buildroot/sys
           d=$(date -u +%Y%m%d)
+          # the date is evaluated inside the chroot: the outer $d is not in
+          # scope there, so compute it on the chroot side
           sudo chroot buildroot /bin/sh -c '
-            echo "== BPM=$BPM"; ls -l "$BPM" 2>&1
-            echo "== BPM_REPOS:[$BPM_REPOS]"
-            for r in /ci/overlay /ci/basix-packages; do
-              echo "== $r: $(ls "$r" 2>/dev/null | wc -l) entries, baselayout template: $(test -f "$r/baselayout/template" && echo ok || echo MISSING)"
-            done
             BPM_REPOS="/ci/overlay /ci/basix-packages" \
             BPM=/ci/bpm-patched/bpm \
             BPM_BUILDROOT= \
-            # the date is evaluated inside the chroot; the outer $d is not
-          # in scope there
-          /ci/mkrootfs -d /newrootfs -o /ci/out/basix-rootfs-$(date -u +%Y%m%d).tar.gz'
+            /ci/mkrootfs -d /newrootfs -o /ci/out/basix-rootfs-$(date -u +%Y%m%d).tar.gz'
 
       - name: Retrieve artifacts from buildroot
         run: |
