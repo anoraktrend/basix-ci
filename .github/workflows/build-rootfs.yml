@@ -102,8 +102,8 @@ jobs:
             BPM_REPOS="/ci/overlay /ci/basix-packages" \
             BPM=/ci/bpm-patched/bpm \
             BPM_BUILDROOT= \
-            # the date is evaluated inside the chroot, where the outer shell's
-          # $d is not in scope
+            # the date is evaluated inside the chroot; the outer $d is not
+          # in scope there
           /ci/mkrootfs -d /newrootfs -o /ci/out/basix-rootfs-$(date -u +%Y%m%d).tar.gz'
 
       - name: Retrieve artifacts from buildroot
