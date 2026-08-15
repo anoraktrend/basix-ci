@@ -111,7 +111,9 @@ ci_bpm() {
     curl -fL --retry 3 --retry-delay 2 -m 900 -o "$f" "$url_str"
     tar -xzf "$f" -C "$TMP"
     mkdir -p "$out"
-    ( cd "$TMP/bpm-$version" && patch -s -p1 < "$(dirname "$0")/patches/bpm-common.sh.patch" )
+    # absolute, the patch redirect must not be re-resolved after the cd
+    _patch=$(cd "$(dirname "$0")" && pwd)/patches/bpm-common.sh.patch
+    ( cd "$TMP/bpm-$version" && patch -s -p1 < "$_patch" )
     cp -R "$TMP/bpm-$version/." "$out/"
     [ -f "$out/bpm" ] && [ -d "$out/lib/style" ] || {
         echo "ci-bpm tree incomplete in $out"; exit 1; }
