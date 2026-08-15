@@ -102,7 +102,9 @@ jobs:
             BPM_REPOS="/ci/overlay /ci/basix-packages" \
             BPM=/ci/bpm-patched/bpm \
             BPM_BUILDROOT= \
-            /ci/mkrootfs -d /newrootfs -o /ci/out/basix-rootfs-$d.tar.gz'
+            # the date is evaluated inside the chroot, where the outer shell's
+          # $d is not in scope
+          /ci/mkrootfs -d /newrootfs -o /ci/out/basix-rootfs-$(date -u +%Y%m%d).tar.gz'
 
       - name: Retrieve artifacts from buildroot
         run: |
