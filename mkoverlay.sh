@@ -30,8 +30,8 @@ case $ODIR in /*) ;; *) ODIR=$PWD/$ODIR ;; esac
 # The CI runs on a patched build of it instead, generated separately with
 # --ci-bpm (patches/bpm-common.sh.patch applied on top of the upstream tag).
 PATCHES="\
-gcc|https://github.com/gcc-mirror/gcc/archive/refs/tags/releases/gcc-\${version}.tar.gz
-binutils|https://github.com/gnutools/binutils-gdb/archive/refs/tags/binutils-\${version//./_}.tar.gz
+gcc|https://mirrors.kernel.org/gnu/gcc/gcc-\${version}/gcc-\${version}.tar.xz
+binutils|https://sourceware.org/pub/binutils/releases/binutils-\${version}.tar.xz
 gmp|https://ftpmirror.gnu.org/gnu/gmp/gmp-\${version}.tar.xz
 mpfr|https://ftpmirror.gnu.org/gnu/mpfr/mpfr-\${version}.tar.xz
 libmpc|https://ftpmirror.gnu.org/gnu/mpc/mpc-\${version}.tar.gz
