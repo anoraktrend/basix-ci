@@ -1,0 +1,73 @@
+#!/bin/sh
+# apply-frankenbasix-overlay(8)
+#
+# Convert a base basix rootfs into the frankenbasix spin by overlaying cached
+# frankenbasix binary packages (chimerautils, the llvm/clang toolchain, the
+# bpm-sccache build extension, etc.) and writing the binutils-compatible shims
+# the llvm package alone does not ship (ar, nm, ... -> llvm-*).
+#
+# This is the "replace some bits with bits from frankenbasix" step: mkrootfs
+# still produces the upstream base root, and this turns it into the spin.
+#
+# usage: apply-frankenbasix-overlay <rootdir> [pkg ...]
+#   $1        rootfs directory (must exist, written into)
+#   [pkg...]  frankenbasix packages to overlay; defaults to the spin set below
+#
+# Packages are taken from the newest cached binary in $BPM_CACHE
+# (/var/cache/bpm/bin). Packages without a cached binary are skipped.
+
+set -eu
+
+ROOT=${1:?usage: $0 <rootdir> [pkg...]}; shift
+CACHE=${BPM_CACHE:-/var/cache/bpm/bin}
+
+# the frankenbasix bits that distinguish the spin from the upstream base:
+#   chimerautils   - BSD coreutils + su/login replacing busybox/util-linux
+#   llvm           - clang/lld/compiler-rt/libc++/libunwind toolchain
+#                    (replaces gcc + binutils as the system compiler)
+#   bpm-sccache    - the build-cache extension
+#   seatd          - session/seat management (no systemd required)
+#   libucontext    - swap-context portability shim used by rust
+PKGS=${*:-"chimerautils llvm bpm-sccache seatd libucontext"}
+
+msg() { printf 'apply-franken: %s\n' "$*" >&2; }
+
+# newest cached binary archive for a package name
+pick() { ls -1t "$CACHE"/"$1"@*.tar.* 2>/dev/null | head -1; }
+
+bin() {
+    f=$(pick "$1")
+    [ -n "$f" ] || { msg "skip $1: no cached binary"; return 0; }
+    msg "overlay $1 <- $(basename "$f")"
+    tar xf "$f" -C "$ROOT" --numeric-owner
+}
+
+for p in $PKGS; do bin "$p"; done
+
+# --- binutils shims ---------------------------------------------------------
+# llvm "provides/conflicts binutils" but only ships `ld` (-> ld.lld); point the
+# GNU tool names the rest of the system calls at the llvm equivalents so the
+# spin has a self-consistent clang toolchain. kbuild needs `ar` for the
+# archives linked into vmlinux; clang uses its integrated assembler, so no `as`.
+b="$ROOT/usr/bin"
+[ -d "$b" ] || b=$(mkdir -p "$b"; echo "$b")
+[ -e "$b/ld" ] || [ -L "$b/ld" ] || ln -s ld.lld "$b/ld"
+for t in ar ranlib nm objcopy objdump readelf strip size addr2line; do
+    [ -e "$b/$t" ] || [ -L "$b/$t" ] || ln -s "llvm-$t" "$b/$t"
+done
+# gcc-compatible C/C++ entry points so packages that hardcode `gcc`/`cc` land on
+# clang with the right runtime/stdlib
+[ -e "$b/cc" ]  || ln -s clang "$b/cc"
+[ -e "$b/gcc" ] || ln -s clang "$b/gcc"
+[ -e "$b/cpp" ] || ln -s clang "$b/cpp"
+[ -e "$b/c++" ] || ln -s clang++ "$b/c++"
+[ -e "$b/g++" ] || ln -s clang++ "$b/g++"
+
+# drop the old GNU binutils/gcc binaries the llvm toolchain replaces so the spin
+# actually uses clang+lld and not the leftover gcc/binutils from the base root
+rm -f \
+    "$ROOT/usr/bin/as" \
+    "$ROOT/usr/bin/ld.bfd" \
+    "$ROOT/usr/bin/"x86_64-*gnu-gcc* \
+    "$ROOT/usr/lib/gcc"
+msg "toolchain shims + llvm overlay written into $ROOT"
