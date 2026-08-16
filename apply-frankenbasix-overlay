@@ -64,10 +64,12 @@ done
 [ -e "$b/g++" ] || ln -s clang++ "$b/g++"
 
 # drop the old GNU binutils/gcc binaries the llvm toolchain replaces so the spin
-# actually uses clang+lld and not the leftover gcc/binutils from the base root
+# actually uses clang+lld and not the leftover gcc/binutils from the base root.
+# libgcc (/usr/lib/gcc) is intentionally kept: musl clang binaries still resolve
+# libgcc_s at runtime, and removing it would break anything that links it.
 rm -f \
     "$ROOT/usr/bin/as" \
     "$ROOT/usr/bin/ld.bfd" \
     "$ROOT/usr/bin/"x86_64-*gnu-gcc* \
-    "$ROOT/usr/lib/gcc"
+    || true
 msg "toolchain shims + llvm overlay written into $ROOT"
