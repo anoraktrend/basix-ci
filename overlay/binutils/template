@@ -8,11 +8,9 @@ license="GPL-3.0-or-later"
 dist_files="https://sourceware.org/pub/binutils/releases/binutils-2.46.1.tar.xz"
 checksum="c66598f95e9225638db6b31ff75ad1c8905d584e65952df05d0fda0add368a55"
 depends="zlib"
-make_depends="zlib"
-host_make_depends="flex"
+make_depends="flex zlib"
 
-use_flags="nls gold lto"
-use_default="-nls +gold +lto"
+use_flags="-nls gold lto"
 
 configure_args="
     --with-lib-path=/usr/lib:/usr/local/lib
