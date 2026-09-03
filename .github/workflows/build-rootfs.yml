@@ -112,17 +112,14 @@ jobs:
           # the chroot needs working DNS to fetch dist_files
           sudo cp /etc/resolv.conf buildroot/etc/resolv.conf
 
-      - name: Restore bpm binary package cache
-        uses: actions/cache/restore@v5
-        with:
-          path: buildroot/var/cache/bpm/bin
-          key: bpm-cache-v2
-
       - name: Restore bpm source tarball cache
         uses: actions/cache/restore@v5
         with:
           path: buildroot/var/cache/bpm/sources
-          key: bpm-src-v2-${{ hashFiles('overlay/**') }}
+          key: bpm-src-v3-${{ hashFiles('overlay/**') }}
+          # Optional fallback key if the exact overlay hash isn't found:
+          restore-keys: |
+            bpm-src-v3-
 
       - name: Materialize patched bpm for the build
         run: |
@@ -156,18 +153,6 @@ jobs:
                   "buildroot/ci/out/basix-rootfs-$d.tar.gz.b3" \
                   "buildroot/ci/out/basix-rootfs-$d.tar.gz.packages" .
           ls -lh basix-rootfs-*
-
-      - name: Save bpm binary package cache
-        uses: actions/cache/save@v5
-        with:
-          path: buildroot/var/cache/bpm/bin
-          key: bpm-cache-v2
-
-      - name: Save bpm source tarball cache
-        uses: actions/cache/save@v5
-        with:
-          path: buildroot/var/cache/bpm/sources
-          key: bpm-src-v2-${{ hashFiles('overlay/**') }}
 
       - uses: actions/upload-artifact@v5
         with:
