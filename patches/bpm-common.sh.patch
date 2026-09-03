@@ -1,48 +1,15 @@
 diff --git a/lib/common.sh b/lib/common.sh
-index 1c9363d..2abdaf1 100644
+index f815d32..b295d89 100644
 --- a/lib/common.sh
 +++ b/lib/common.sh
-@@ -386,7 +386,7 @@ fetch_url() {
+@@ -383,8 +383,8 @@ fetch_url() {
      sub "fetch ${1}"
      case $1 in
-         file://*) cp -f "${1#file://}" "$2.part" ;; 
+         file://*) cp -f "${1#file://}" "$2.part" ;;
 -        *) if have curl; then curl -fL --retry 3 -o "$2.part" "$1"
+-           elif have wget; then wget -O "$2.part" "$1"
 +        *) if have curl; then curl -fL --retry 4 --retry-delay 10 -o "$2.part" "$1"
-+           elif have wget; then wget -O "$2.part" --tries=5 --waitretry=10  "$1"
-           else die "neither curl nor wget found"; fi ;;
-    esac
-@@ -406,6 +420,17 @@ blake3() {
-     else die "no blake3 implementation found (install b3sum or rhash)"; fi
- }
- 
-+# 0 = file matches the expected hash, 1 = mismatch or missing
-+src_check() {
-+    _f=$1 _want=$2
-+    [ -f "$_f" ] || return 1
-+    _got=$(blake3 "$_f")
-+    _cmp=${#_want}
-+    if [ "${#_got}" -lt "$_cmp" ]; then _cmp=${#_got}; fi
-+    [ "$(printf '%s' "$_want" | cut -c"1-$_cmp")" = \
-+      "$(printf '%s' "$_got"  | cut -c"1-$_cmp")" ]
-+}
-+
- src_verify() {
-     _n=0
-     set -- ${checksum:-}
-@@ -416,14 +441,10 @@ src_verify() {
-         eval "_want=\${$_n:-}"
-         [ -n "$_want" ] || die "$pkg_name: missing checksum for ${_f##*/}"
-         case $_want in SKIP) continue ;; esac
--        _got=$(blake3 "$_f")
--        _cmp=${#_want}
--        if [ "${#_got}" -lt "$_cmp" ]; then _cmp=${#_got}; fi
--        if [ "$(printf '%s' "$_want" | cut -c"1-$_cmp")" != \
--             "$(printf '%s' "$_got"  | cut -c"1-$_cmp")" ]; then
-+        if ! src_check "$_f" "$_want"; then
-             die "$pkg_name: blake3 mismatch for ${_f##*/}
-     expected $_want
--    got      $_got"
-+    got      $(blake3 "$_f")"
-         fi
-     done
- }
++           elif have wget; then wget -O --tries=5 --waitretry=10 "$2.part" "$1"
+            else die "neither curl nor wget found"; fi ;;
+     esac
+     mv -f "$2.part" "$2"
