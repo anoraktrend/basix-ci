@@ -39,7 +39,7 @@ m4|https://mirrors.kernel.org/gnu/m4/m4-\${version}.tar.xz
 make|https://mirrors.kernel.org/gnu/make/make-\${version}.tar.gz
 bison|https://mirrors.kernel.org/gnu/bison/bison-\${version}.tar.xz
 zlib|https://zlib.net/zlib-\${version}.tar.gz
-pigz|https://sources.libreelec.tv/mirror/pigz/pigz-\${version}.tar.gz
+pigz|https://zlib.net/pigz/pigz-\${version}.tar.gz
 musl|https://git.musl-libc.org/cgit/musl/snapshot/musl-\${version}.tar.gz"
 
 check_sync() {

@@ -5,8 +5,8 @@ build_style=custom
 short_desc="Parallel gzip"
 home_page="https://zlib.net/pigz/"
 license="Zlib"
-dist_files="https://github.com/madler/pigz/archive/refs/tags/v2.8.tar.gz"
-checksum="1ab441fbc983a7442d11b4842a6bddfb5376b6940fe2ba735de0f22161e0d802"
+dist_files="https://zlib.net/pigz/pigz-2.8.tar.gz"
+checksum="fa165f414a12851806d9d54920879dd989917b9aa410aec671c602b18773b236"
 depends="zlib"
 make_depends="zlib"
 
