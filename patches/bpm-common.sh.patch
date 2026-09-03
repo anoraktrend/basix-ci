@@ -2,6 +2,15 @@ diff --git a/lib/common.sh b/lib/common.sh
 index 1c9363d..2abdaf1 100644
 --- a/lib/common.sh
 +++ b/lib/common.sh
+@@ -386,7 +386,7 @@ fetch_url() {
+     sub "fetch ${1}"
+     case $1 in
+         file://*) cp -f "${1#file://}" "$2.part" ;; 
+-        *) if have curl; then curl -fL --retry 3 -o "$2.part" "$1"
++        *) if have curl; then curl -fL --retry 4 --retry-delay 10 -o "$2.part" "$1"
++           elif have wget; then wget -O "$2.part" --tries=5 --waitretry=10  "$1"
+           else die "neither curl nor wget found"; fi ;;
+
 @@ -391,11 +391,25 @@ fetch_git() {
  
  src_fetch() {
