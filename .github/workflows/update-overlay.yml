@@ -1,18 +1,30 @@
-      - name: Verify mirror overlay is in sync
-        run: ./mkoverlay.sh --check
+name: 'Sync Mirror Overlay'
+description: 'Checks if the rootfs mirror overlay is out of sync and automatically fixes it'
 
-      # This action only fires if the step above fails, or you can let it run unconditionally
-      - name: Auto-update overlay and push back
-        if: failure() # Runs only if the check above reports a STALE mismatch
-        uses: taichi/dependencies-autoupdate@v1
-        with:
-          # The exact command needed to repair the stale files
-          update_command: './mkoverlay.sh --update || ./mkoverlay.sh'
-          
-          # Options: 'commit' pushes directly to the current branch. 
-          # Change to 'pr' if you want a code review before it updates!
-          management_type: 'commit' 
-          
-          commit_message: 'chore(ci): auto-update stale overlay dependencies [skip ci]'
-          git_user_name: 'github-actions[bot]'
-          git_user_email: '41898282+github-actions[bot]@users.noreply.github.com'
+inputs:
+  update_args:
+    description: 'Arguments to pass to the update script if stale'
+    required: false
+    default: '--update'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Verify and Update Overlay
+      shell: bash
+      run: |
+        if ! ./mkoverlay.sh --check; then
+          echo "Overlay is STALE. Running update..."
+          ./mkoverlay.sh ${{ inputs.update_args }} || ./mkoverlay.sh
+        else
+          echo "Overlay is in sync."
+        fi
+
+    - name: Commit and Push Changes
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "chore(ci): auto-update stale overlay dependencies [skip ci]"
+        file_pattern: 'overlay/ basix-packages/'
+        commit_user_name: "github-actions[bot]"
+        commit_user_email: "41898282+github-actions[bot]@://github.com"
+
