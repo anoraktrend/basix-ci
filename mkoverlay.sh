@@ -86,7 +86,7 @@ gen() {
         eval "url_str=\"$url\""
         echo "== $pkg $version: $url_str"
         f=$TMP/$pkg.tarball
-        curl -fL --retry 3 --retry-delay 2 -m 900 -o "$f" "$url_str"
+        curl -fL --retry 4 --retry-delay 2 -m 900 -o "$f" "$url_str"
         hash=$(b3sum "$f" | cut -d' ' -f1)
         mkdir -p "$ODIR/$pkg"
         awk -v dist="$url_str" -v sum="$hash" '
