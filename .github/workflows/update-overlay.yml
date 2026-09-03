@@ -1,30 +1,36 @@
 name: 'Sync Mirror Overlay'
-description: 'Checks if the rootfs mirror overlay is out of sync and automatically fixes it'
 
-inputs:
-  update_args:
-    description: 'Arguments to pass to the update script if stale'
-    required: false
-    default: '--update'
+on:
+  workflow_dispatch: # Allows you to trigger this manually from the Actions tab
+  schedule:
+    - cron: '0 0 * * *' # Optional: Automatically runs every day at midnight
 
-runs:
-  using: 'composite'
-  steps:
-    - name: Verify and Update Overlay
-      shell: bash
-      run: |
-        if ! ./mkoverlay.sh --check; then
-          echo "Overlay is STALE. Running update..."
-          ./mkoverlay.sh ${{ inputs.update_args }} || ./mkoverlay.sh
-        else
-          echo "Overlay is in sync."
-        fi
+permissions:
+  contents: write
 
-    - name: Commit and Push Changes
-      uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        commit_message: "chore(ci): auto-update stale overlay dependencies [skip ci]"
-        file_pattern: 'overlay/ basix-packages/'
-        commit_user_name: "github-actions[bot]"
-        commit_user_email: "41898282+github-actions[bot]@://github.com"
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Verify and Update Overlay
+        shell: bash
+        run: |
+          if ! ./mkoverlay.sh --check; then
+            echo "Overlay is STALE. Running update..."
+            ./mkoverlay.sh --update || ./mkoverlay.sh
+          else
+            echo "Overlay is in sync."
+          fi
+
+      - name: Commit and Push Changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(ci): auto-update stale overlay dependencies [skip ci]"
+          file_pattern: 'overlay/ basix-packages/'
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
 
