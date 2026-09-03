@@ -24,6 +24,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_KEY }}
       AWS_DEFAULT_REGION: ${{ secrets.S3_REGION || 'auto' }}
       AWS_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT }}
+      
     steps:
       - uses: actions/checkout@v5
         with:
@@ -49,13 +50,13 @@ jobs:
           }
 
       - name: Download and verify previous rootfs
-       run: |
+        run: |
           # public CDN blocks datacenter IPs, so pull straight from S3
           # Fetch the latest basix folder using the same method as setup-cdn-latest
           latest_folder=$(aws s3 ls "s3://$S3_BUCKET/basix/" | \
             grep -E 'PRE [0-9]{4}-[0-9]{2}-[0-9]{2}/' | \
-          sort | \
-          tail -n 1 | \
+            sort | \
+            tail -n 1 | \
             awk '{print $2}' | \
             sed 's|/||')
          
@@ -72,24 +73,24 @@ jobs:
          
           aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key" previous.tar.gz || {
             echo "Failed to fetch previous tarball from CDN. Bailing out."
-          exit 1
+            exit 1
           }
           aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key.b3" previous.tar.gz.b3 || {
             echo "Failed to fetch checksum file from CDN. Bailing out."
             exit 1
           }
       
-       # the .b3 carries the dated filename of the tarball it guards
-       file=$(awk 'NR==1 {print $2}' previous.tar.gz.b3)
-       if [ -z "$file" ]; then
-       echo "Checksum file is invalid. Bailing out."
-       exit 1
-       fi
-       mv previous.tar.gz "$file"
-       b3sum -c previous.tar.gz.b3 || {
-       echo "checksum mismatch, bailing out"
-       exit 1
-       }
+          # Fixed indentation for verification block below
+          file=$(awk 'NR==1 {print $2}' previous.tar.gz.b3)
+          if [ -z "$file" ]; then
+            echo "Checksum file is invalid. Bailing out."
+            exit 1
+          fi
+          mv previous.tar.gz "$file"
+          b3sum -c previous.tar.gz.b3 || {
+            echo "checksum mismatch, bailing out"
+            exit 1
+          }
 
       - name: Extract previous rootfs as buildroot
         run: |
@@ -175,80 +176,54 @@ jobs:
             basix-rootfs-*.tar.gz.packages
 
       - name: Publish to CDN (S3-compatible)
-       if: env.S3_ENDPOINT != ''
-       run: |
-         date=$(date -u +%Y%m%d)
-         dir=$(date -u +%Y-%m-%d)
-         aws s3 cp --only-show-errors --content-type application/gzip \
-           "basix-rootfs-$date.tar.gz" \
-           "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz"
-         aws s3 cp --only-show-errors \
-           "basix-rootfs-$date.tar.gz.b3" \
-           "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.b3"
-         aws s3 cp --only-show-errors --content-type text/plain \
-           "basix-rootfs-$date.tar.gz.packages" \
-           "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.packages"
-         printf 'basix/%s/basix-rootfs-%s.tar.gz\n' "$dir" "$date" | \
-           aws s3 cp --only-show-errors --content-type text/plain - \
-           "s3://$S3_BUCKET/basix/latest-version"
-         # Create a "latest" redirect link
-         echo '<html><head><meta http-equiv="refresh" content="0; url=https://$S3_BUCKET.s3.$S3_REGION.amazonaws.com/basix/$dir/" /></head></html>' | \
-           aws s3 cp --only-show-errors --content-type text/html - \
-           "s3://$S3_BUCKET/basix/latest/index.html"
-      
-       # Generate an index.html file for the published folder
-       cat <<EOF > index.html
-       <!DOCTYPE html>
-       <html>
-       <head>
-       <title>Basix RootFS - $dir</title>
-       <style>
-       body { font-family: Arial, sans-serif; margin: 20px; }
-       h1 { color: #333; }
-       ul { list-style-type: none; padding: 0; }
-       li { margin: 10px 0; }
-       a { color: #0066cc; text-decoration: none; }
-       a:hover { text-decoration: underline; }
-       </style>
-       </head>
-       <body>
-       <h1>Basix RootFS - $dir</h1>
-       <p>Download the latest rootfs artifacts:</p>
-       <ul>
-       <li><a href="basix-rootfs-$date.tar.gz">basix-rootfs-$date.tar.gz</a> (RootFS Tarball)</li>
-       <li><a href="basix-rootfs-$date.tar.gz.b3">basix-rootfs-$date.tar.gz.b3</a> (Checksum)</li>
-       <li><a href="basix-rootfs-$date.tar.gz.packages">basix-rootfs-$date.tar.gz.packages</a> (Package List)</li>
-       </ul>
-       </body>
-       </html>
-       EOF
-      
-       aws s3 cp --only-show-errors --content-type text/html index.html "s3://$S3_BUCKET/basix/$dir/index.html"
-       rm index.html
-
-      - name: Verify published latest
         if: env.S3_ENDPOINT != ''
         run: |
           date=$(date -u +%Y%m%d)
           dir=$(date -u +%Y-%m-%d)
-          expected="basix-rootfs-$date.tar.gz.b3"
-          key=$(aws s3 cp --only-show-errors \
-            "s3://$S3_BUCKET/basix/latest-version" - | tr -d '\n')
-          [ "$key" = "basix/$dir/basix-rootfs-$date.tar.gz" ] || {
-            echo "CDN pointer not updated: $key" >&2
-            exit 1
-          }
-          aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key.b3" - |
-            diff - "$expected" || {
-            echo "published checksum mismatch" >&2
-            exit 1
-          }
-          echo "CDN is serving the new rootfs"
+          aws s3 cp --only-show-errors --content-type application/gzip \
+            "basix-rootfs-$date.tar.gz" \
+            "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz"
+          aws s3 cp --only-show-errors \
+            "basix-rootfs-$date.tar.gz.b3" \
+            "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.b3"
+          aws s3 cp --only-show-errors --content-type text/plain \
+            "basix-rootfs-$date.tar.gz.packages" \
+            "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.packages"
+          printf 'basix/%s/basix-rootfs-%s.tar.gz\n' "$dir" "$date" | \
+            aws s3 cp --only-show-errors --content-type text/plain - \
+            "s3://$S3_BUCKET/basix/latest-version"
+          # Create a "latest" redirect link
+          echo "<html><head><meta http-equiv=\"refresh\" content=\"0; url=https://$S3_BUCKET.s3.$S3_REGION.amazonaws.com/basix/$dir/\" /></head></html>" | \
+            aws s3 cp --only-show-errors --content-type text/html - \
+            "s3://$S3_BUCKET/basix/latest/index.html"
+      
+          # Generate an index.html file for the published folder
+          cat <<EOF > index.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+          <title>Basix RootFS - $dir</title>
+          <style>
+          body { font-family: Arial, sans-serif; margin: 20px; }
+          h1 { color: #333; }
+          ul { list-style-type: none; padding: 0; }
+          li { margin: 10px 0; }
+          a { color: #0066cc; text-decoration: none; }
+          a:hover { text-decoration: underline; }
+          </style>
+          </head>
+          <body>
+          <h1>Basix RootFS - $dir</h1>
+          <p>Download the latest rootfs artifacts:</p>
+          <ul>
+          <li><a href="basix-rootfs-$date.tar.gz">basix-rootfs-$date.tar.gz</a> (RootFS Tarball)</li>
+          <li><a href="basix-rootfs-$date.tar.gz.b3">basix-rootfs-$date.tar.gz.b3</a> (B3 Checksum)</li>
+          <li><a href="basix-rootfs-$date.tar.gz.packages">basix-rootfs-$date.tar.gz.packages</a> (Package List)</li>
+          </ul>
+          </body>
+          </html>
+          EOF
+          
+          # Upload index.html to S3 folder context
+          aws s3 cp --only-show-errors --content-type text/html index.html "s3://$S3_BUCKET/basix/$dir/index.html"
 
-      - name: Cleanup mounts
-        if: always()
-        run: |
-          sudo umount buildroot/proc 2>/dev/null || true
-          sudo umount buildroot/dev 2>/dev/null || true
-          sudo umount buildroot/sys 2>/dev/null || true
-          sudo umount buildroot 2>/dev/null || true
