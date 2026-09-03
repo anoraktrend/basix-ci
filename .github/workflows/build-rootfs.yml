@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-lareplacement
+    runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
       S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
