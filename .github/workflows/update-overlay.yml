@@ -16,6 +16,14 @@ jobs:
         with:
           submodules: recursive
 
+      # 🟢 ADDED: Install dependency needed by mkoverlay.sh
+      - name: Install b3sum if missing
+        run: |
+          command -v b3sum || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq b3sum
+          }
+
       - name: Verify and Update Overlay
         shell: bash
         run: |
