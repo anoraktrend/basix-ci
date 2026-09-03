@@ -11,33 +11,7 @@ index 1c9363d..2abdaf1 100644
 +           elif have wget; then wget -O "$2.part" --tries=5 --waitretry=10  "$1"
            else die "neither curl nor wget found"; fi ;;
 
-@@ -391,11 +391,25 @@ fetch_git() {
- 
- src_fetch() {
-     mkdir -p "$src_dir"
-+    _n=0
-+    set -- ${checksum:-}
-     for _d in ${dist_files:-}; do
-+        _n=$((_n + 1))
-         _f=$src_dir/$(dist_name "$_d")
-         case $_d in
-             git+*) fetch_git "$_d" "$_f" ;;
--            *) if [ ! -f "$_f" ]; then fetch_url "${_d%%>*}" "$_f"; fi ;;
-+            *)
-+                # a restored cache can hold bytes fetched under an older
-+                # checksum (upstream re-hashed a mirror): never trust a
-+                # pre-existing file, refetch it if it no longer verifies
-+                eval "_want=\${$_n:-}"
-+                if [ -n "$_want" ] && [ "$_want" != SKIP ] && [ -f "$_f" ] && \
-+                   ! src_check "$_f" "$_want"; then
-+                    warn "cached source fails checksum, re-fetching ${_f##*/}"
-+                    rm -f "$_f"
-+                fi
-+                [ -f "$_f" ] || fetch_url "${_d%%>*}" "$_f"
-+                ;;
-         esac
-     done
- }
+
 @@ -406,6 +420,17 @@ blake3() {
      else die "no blake3 implementation found (install b3sum or rhash)"; fi
  }
