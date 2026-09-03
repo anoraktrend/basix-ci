@@ -10,8 +10,6 @@ index 1c9363d..2abdaf1 100644
 +        *) if have curl; then curl -fL --retry 4 --retry-delay 10 -o "$2.part" "$1"
 +           elif have wget; then wget -O "$2.part" --tries=5 --waitretry=10  "$1"
            else die "neither curl nor wget found"; fi ;;
-
-
 @@ -406,6 +420,17 @@ blake3() {
      else die "no blake3 implementation found (install b3sum or rhash)"; fi
  }
