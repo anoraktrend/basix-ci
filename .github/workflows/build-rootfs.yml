@@ -144,7 +144,8 @@ jobs:
           sudo chroot buildroot /bin/sh -c '
             BPM_REPOS="/ci/overlay /ci/basix-packages" \
             BPM=/ci/bpm-patched/bpm \
-            BPM_BUILDROOT= \
+            BPM_BUILDROOT= \\
+            BPM_USE="zlib ssl man doc -x11 -wayland -pulseaudio -bluetooth -nls" \
             /ci/mkrootfs -d /newrootfs -o /ci/out/basix-rootfs-$(date -u +%Y%m%d).tar.gz'
 
       - name: Retrieve artifacts from buildroot
