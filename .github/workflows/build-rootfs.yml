@@ -29,6 +29,18 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Verify CDN setup
+        run: |
+          if [ -z "$S3_ENDPOINT" ] || [ -z "$S3_BUCKET" ] || [ -z "$S3_ACCESS_KEY" ] || [ -z "$S3_SECRET_KEY" ]; then
+            echo "Error: CDN (S3) environment variables are not set. Please configure the following secrets:"
+            echo "- S3_ENDPOINT"
+            echo "- S3_BUCKET"
+            echo "- S3_ACCESS_KEY"
+            echo "- S3_SECRET_KEY"
+            exit 1
+          fi
+          echo "CDN setup verified."
+
       - name: Install b3sum if missing
         run: |
           command -v b3sum || {
@@ -37,19 +49,35 @@ jobs:
           }
 
       - name: Download and verify previous rootfs
-        run: |
-          # public CDN blocks datacenter IPs, so pull straight from S3
-          key=$(aws s3 cp --only-show-errors \
-            "s3://$S3_BUCKET/basix/latest-version" - | tr -d '\n')
-          aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key" previous.tar.gz
-          aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key.b3" previous.tar.gz.b3
-          # the .b3 carries the dated filename of the tarball it guards
-          file=$(awk 'NR==1 {print $2}' previous.tar.gz.b3)
-          mv previous.tar.gz "$file"
-          b3sum -c previous.tar.gz.b3 || {
-            echo "checksum mismatch, bailing out"
-            exit 1
-          }
+      run: |
+      # public CDN blocks datacenter IPs, so pull straight from S3
+      if ! key=$(aws s3 cp --only-show-errors "s3://$S3_BUCKET/basix/latest-version" - | tr -d '\n'); then
+      echo "Failed to fetch latest-version file from CDN. It may not exist yet (e.g., first run)."
+        exit 0
+      fi
+      if [ -z "$key" ]; then
+        echo "latest-version file is empty. Bailing out."
+        exit 1
+      fi
+      aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key" previous.tar.gz || {
+      echo "Failed to fetch previous tarball from CDN. Bailing out."
+        exit 1
+           }
+           aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key.b3" previous.tar.gz.b3 || {
+             echo "Failed to fetch checksum file from CDN. Bailing out."
+             exit 1
+           }
+           # the .b3 carries the dated filename of the tarball it guards
+           file=$(awk 'NR==1 {print $2}' previous.tar.gz.b3)
+           if [ -z "$file" ]; then
+             echo "Checksum file is invalid. Bailing out."
+             exit 1
+           fi
+           mv previous.tar.gz "$file"
+           b3sum -c previous.tar.gz.b3 || {
+             echo "checksum mismatch, bailing out"
+             exit 1
+           }
 
       - name: Extract previous rootfs as buildroot
         run: |
@@ -135,22 +163,26 @@ jobs:
             basix-rootfs-*.tar.gz.packages
 
       - name: Publish to CDN (S3-compatible)
-        if: env.S3_ENDPOINT != ''
-        run: |
-          date=$(date -u +%Y%m%d)
-          dir=$(date -u +%Y-%m-%d)
-          aws s3 cp --only-show-errors --content-type application/gzip \
-            "basix-rootfs-$date.tar.gz" \
-            "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz"
-          aws s3 cp --only-show-errors \
-            "basix-rootfs-$date.tar.gz.b3" \
-            "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.b3"
-          aws s3 cp --only-show-errors --content-type text/plain \
-            "basix-rootfs-$date.tar.gz.packages" \
-            "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.packages"
-          printf 'basix/%s/basix-rootfs-%s.tar.gz\n' "$dir" "$date" | \
-            aws s3 cp --only-show-errors --content-type text/plain - \
-            "s3://$S3_BUCKET/basix/latest-version"
+      if: env.S3_ENDPOINT != ''
+      run: |
+      date=$(date -u +%Y%m%d)
+      dir=$(date -u +%Y-%m-%d)
+      aws s3 cp --only-show-errors --content-type application/gzip \
+      "basix-rootfs-$date.tar.gz" \
+      "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz"
+      aws s3 cp --only-show-errors \
+      "basix-rootfs-$date.tar.gz.b3" \
+      "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.b3"
+      aws s3 cp --only-show-errors --content-type text/plain \
+      "basix-rootfs-$date.tar.gz.packages" \
+      "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.packages"
+      printf 'basix/%s/basix-rootfs-%s.tar.gz\n' "$dir" "$date" | \
+      aws s3 cp --only-show-errors --content-type text/plain - \
+      "s3://$S3_BUCKET/basix/latest-version"
+           # Create a "latest" redirect link
+           echo '<html><head><meta http-equiv="refresh" content="0; url=https://$S3_BUCKET.s3.$S3_REGION.amazonaws.com/basix/$dir/" /></head></html>' | \
+             aws s3 cp --only-show-errors --content-type text/html - \
+             "s3://$S3_BUCKET/basix/latest/index.html"
 
       - name: Verify published latest
         if: env.S3_ENDPOINT != ''
