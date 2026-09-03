@@ -31,16 +31,16 @@ case $ODIR in /*) ;; *) ODIR=$PWD/$ODIR ;; esac
 # --ci-bpm (patches/bpm-common.sh.patch applied on top of the upstream tag).
 PATCHES="\
 gcc|https://mirrors.kernel.org/gnu/gcc/gcc-\${version}/gcc-\${version}.tar.xz
-binutils|https://sourceware.org/pub/binutils/releases/binutils-\${version}.tar.xz
-gmp|https://ftpmirror.gnu.org/gnu/gmp/gmp-\${version}.tar.xz
-mpfr|https://ftpmirror.gnu.org/gnu/mpfr/mpfr-\${version}.tar.xz
-libmpc|https://ftpmirror.gnu.org/gnu/mpc/mpc-\${version}.tar.gz
-m4|https://ftpmirror.gnu.org/gnu/m4/m4-\${version}.tar.xz
-make|https://ftpmirror.gnu.org/gnu/make/make-\${version}.tar.gz
-bison|https://ftpmirror.gnu.org/gnu/bison/bison-\${version}.tar.xz
-zlib|https://github.com/madler/zlib/releases/download/v\${version}/zlib-\${version}.tar.gz
-pigz|https://github.com/madler/pigz/archive/refs/tags/v\${version}.tar.gz
-musl|https://github.com/ifduyue/musl/archive/refs/tags/v\${version}.tar.gz"
+binutils|https://mirrors.kernel.org/gnu/binutils/binutils-\${version}.tar.xz
+gmp|https://mirrors.kernel.org/gnu/gmp/gmp-\${version}.tar.xz
+mpfr|https://mirrors.kernel.org/gnu/mpfr/mpfr-\${version}.tar.xz
+libmpc|https://mirrors.kernel.org/gnu/mpc/mpc-\${version}.tar.gz
+m4|https://mirrors.kernel.org/gnu/m4/m4-\${version}.tar.xz
+make|https://mirrors.kernel.org/gnu/make/make-\${version}.tar.gz
+bison|https://mirrors.kernel.org/gnu/bison/bison-\${version}.tar.xz
+zlib|https://zlib.net/zlib-\${version}.tar.gz
+pigz|https://sources.libreelec.tv/mirror/pigz/pigz-\${version}.tar.gz
+musl|https://git.musl-libc.org/cgit/musl/snapshot/musl-\${version}.tar.gz"
 
 check_sync() {
     dir=$1
