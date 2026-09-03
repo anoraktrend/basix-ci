@@ -1,0 +1,18 @@
+      - name: Verify mirror overlay is in sync
+        run: ./mkoverlay.sh --check
+
+      # This action only fires if the step above fails, or you can let it run unconditionally
+      - name: Auto-update overlay and push back
+        if: failure() # Runs only if the check above reports a STALE mismatch
+        uses: taichi/dependencies-autoupdate@v1
+        with:
+          # The exact command needed to repair the stale files
+          update_command: './mkoverlay.sh --update || ./mkoverlay.sh'
+          
+          # Options: 'commit' pushes directly to the current branch. 
+          # Change to 'pr' if you want a code review before it updates!
+          management_type: 'commit' 
+          
+          commit_message: 'chore(ci): auto-update stale overlay dependencies [skip ci]'
+          git_user_name: 'github-actions[bot]'
+          git_user_email: '41898282+github-actions[bot]@users.noreply.github.com'
