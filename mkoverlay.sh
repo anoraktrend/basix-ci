@@ -131,3 +131,4 @@ case ${1:-gen} in
     --ci-bpm) ci_bpm "${2:?usage: mkoverlay.sh --ci-bpm <dir>}" ;;
     *) gen ;;
 esac
+
