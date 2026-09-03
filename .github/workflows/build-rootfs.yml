@@ -179,10 +179,40 @@ jobs:
       printf 'basix/%s/basix-rootfs-%s.tar.gz\n' "$dir" "$date" | \
       aws s3 cp --only-show-errors --content-type text/plain - \
       "s3://$S3_BUCKET/basix/latest-version"
-           # Create a "latest" redirect link
-           echo '<html><head><meta http-equiv="refresh" content="0; url=https://$S3_BUCKET.s3.$S3_REGION.amazonaws.com/basix/$dir/" /></head></html>' | \
-             aws s3 cp --only-show-errors --content-type text/html - \
-             "s3://$S3_BUCKET/basix/latest/index.html"
+      # Create a "latest" redirect link
+      echo '<html><head><meta http-equiv="refresh" content="0; url=https://$S3_BUCKET.s3.$S3_REGION.amazonaws.com/basix/$dir/" /></head></html>' | \
+      aws s3 cp --only-show-errors --content-type text/html - \
+      "s3://$S3_BUCKET/basix/latest/index.html"
+          
+          # Generate an index.html file for the published folder
+          cat <<EOF > index.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Basix RootFS - $dir</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 20px; }
+              h1 { color: #333; }
+              ul { list-style-type: none; padding: 0; }
+              li { margin: 10px 0; }
+              a { color: #0066cc; text-decoration: none; }
+              a:hover { text-decoration: underline; }
+            </style>
+          </head>
+          <body>
+            <h1>Basix RootFS - $dir</h1>
+            <p>Download the latest rootfs artifacts:</p>
+            <ul>
+              <li><a href="basix-rootfs-$date.tar.gz">basix-rootfs-$date.tar.gz</a> (RootFS Tarball)</li>
+              <li><a href="basix-rootfs-$date.tar.gz.b3">basix-rootfs-$date.tar.gz.b3</a> (Checksum)</li>
+              <li><a href="basix-rootfs-$date.tar.gz.packages">basix-rootfs-$date.tar.gz.packages</a> (Package List)</li>
+            </ul>
+          </body>
+          </html>
+          EOF
+          
+          aws s3 cp --only-show-errors --content-type text/html index.html "s3://$S3_BUCKET/basix/$dir/index.html"
+          rm index.html
 
       - name: Verify published latest
         if: env.S3_ENDPOINT != ''
