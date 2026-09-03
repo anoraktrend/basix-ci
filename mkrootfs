@@ -3,10 +3,6 @@
 set -eu
 
 : "${BPM:=bpm}"
-# overlay first: the first repo providing a template wins, so a sibling
-# mirror-overlay shadows basix-packages. $0 is /ci/mkrootfs in the CI chroot,
-# where both repos live beside it; override with BPM_REPOS for anything else.
-: "${BPM_REPOS:=$(dirname "$0")/overlay $(dirname "$0")/basix-packages}"
 
 PKGS="baselayout musl busybox b3sum bzip2 xz pigz m4 flex bison make binutils
       gmp mpfr libmpc gcc linux-headers certs openssl curl git bpm baseinit"
@@ -22,17 +18,6 @@ COMPRESS=gz
 KEEP=0
 BUILD=1
 HOSTNAME=
-# the frankenbasix spin builds against a clang/lld toolchain with no binutils:
-# bpm's mount-namespace sandbox can't assemble its build root inside this
-# chroot, and the system compiler is clang (gcc here has no /usr/bin/as). These
-# match the environment the manual builds used and keep `mkrootfs` runnable as
-# root in the chroot without a rebuild.
-: "${BPM_SANDBOX:=0}"
-: "${CC:=clang}"
-: "${CXX:=clang++}"
-export BPM_SANDBOX CC CXX
-SPIN=0
-SPIN_PKGS=${SPIN_PKGS:-"chimerautils llvm bpm-sccache seatd libucontext"}
 
 msg() { printf '=> %s\n' "$*" >&2; }
 sub() { printf '   -> %s\n' "$*" >&2; }
@@ -73,9 +58,6 @@ usage: ${0##*/} [-o tarball] [-d rootdir] [-c gz|xz|zst|none] [-H hostname]
   -f  read the package list from a file, one name or whitespace run per line
   -k  keep the assembled directory instead of removing it
   -n  do not build anything, fail if any binary package is missing or stale
-  -F  frankenbasix spin: after the base install, overlay the cached franken
-      packages (chimerautils, llvm/clang, bpm-sccache, ...) and the binutils
-      shims. Use -d/SPIN_PKGS to change which packages are overlaid.
 
 With no packages named, the default base set is used:
 $PKGS
@@ -85,7 +67,7 @@ EOF
 
 enter_ns "$@"
 
-while getopts o:d:c:H:f:knhF _o; do
+while getopts o:d:c:H:f:knh _o; do
     case $_o in
         o) OUT=$OPTARG ;;
         d) ROOT=$OPTARG ;;
@@ -95,7 +77,6 @@ while getopts o:d:c:H:f:knhF _o; do
            PKGS=$(sed 's/#.*//' "$OPTARG") ;;
         k) KEEP=1 ;;
         n) BUILD=0 ;;
-        F) SPIN=1 ;;
         h) usage 0 ;;
         *) usage ;;
     esac
@@ -175,18 +156,6 @@ if [ -n "$_seed" ]; then
 fi
 # shellcheck disable=SC2086
 install_pkgs $_rest
-
-# frankenbasix spin: replace the binutils/gcc base toolchain bits with the
-# frankenbasix-built packages (chimerautils, llvm/clang, bpm-sccache, ...) and
-# write the binutils-compatible shims llvm alone doesn't ship
-if [ "$SPIN" = 1 ]; then
-    if have apply-frankenbasix-overlay; then
-        msg "frankenbasix spin: overlaying $SPIN_PKGS"
-        apply-frankenbasix-overlay "$ROOT" $SPIN_PKGS
-    else
-        warn "apply-frankenbasix-overlay not on PATH; skipping spin overlay"
-    fi
-fi
 
 _dev=$(find "$ROOT" \( -type c -o -type b \) -print 2>/dev/null | head -5)
 if [ -n "$_dev" ]; then
