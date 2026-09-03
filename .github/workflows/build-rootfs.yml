@@ -51,33 +51,45 @@ jobs:
       - name: Download and verify previous rootfs
       run: |
       # public CDN blocks datacenter IPs, so pull straight from S3
-      if ! key=$(aws s3 cp --only-show-errors "s3://$S3_BUCKET/basix/latest-version" - | tr -d '\n'); then
-      echo "Failed to fetch latest-version file from CDN. It may not exist yet (e.g., first run)."
-        exit 0
+      # Fetch the latest basix folder using the same method as setup-cdn-latest
+      latest_folder=$(aws s3 ls "s3://$S3_BUCKET/basix/" | \
+      grep -E 'PRE [0-9]{4}-[0-9]{2}-[0-9]{2}/' | \
+        sort | \
+        tail -n 1 | \
+      awk '{print $2}' | \
+      sed 's|/||')
+      
+      if [ -z "$latest_folder" ]; then
+      echo "No basix folders found in the CDN. This may be the first run."
+      exit 0
       fi
-      if [ -z "$key" ]; then
-        echo "latest-version file is empty. Bailing out."
-        exit 1
-      fi
+      
+      echo "Latest folder: $latest_folder"
+      
+      # Construct the key for the latest tarball
+      date=$(echo "$latest_folder" | sed 's|-||g')
+      key="basix/$latest_folder/basix-rootfs-$date.tar.gz"
+      
       aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key" previous.tar.gz || {
       echo "Failed to fetch previous tarball from CDN. Bailing out."
         exit 1
-           }
-           aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key.b3" previous.tar.gz.b3 || {
-             echo "Failed to fetch checksum file from CDN. Bailing out."
-             exit 1
-           }
-           # the .b3 carries the dated filename of the tarball it guards
-           file=$(awk 'NR==1 {print $2}' previous.tar.gz.b3)
-           if [ -z "$file" ]; then
-             echo "Checksum file is invalid. Bailing out."
-             exit 1
-           fi
-           mv previous.tar.gz "$file"
-           b3sum -c previous.tar.gz.b3 || {
-             echo "checksum mismatch, bailing out"
-             exit 1
-           }
+      }
+      aws s3 cp --only-show-errors "s3://$S3_BUCKET/$key.b3" previous.tar.gz.b3 || {
+      echo "Failed to fetch checksum file from CDN. Bailing out."
+      exit 1
+      }
+          
+          # the .b3 carries the dated filename of the tarball it guards
+          file=$(awk 'NR==1 {print $2}' previous.tar.gz.b3)
+          if [ -z "$file" ]; then
+            echo "Checksum file is invalid. Bailing out."
+            exit 1
+          fi
+          mv previous.tar.gz "$file"
+          b3sum -c previous.tar.gz.b3 || {
+            echo "checksum mismatch, bailing out"
+            exit 1
+          }
 
       - name: Extract previous rootfs as buildroot
         run: |
