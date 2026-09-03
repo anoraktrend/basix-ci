@@ -115,7 +115,7 @@ ci_bpm() {
     url_str="https://github.com/kkrruumm/bpm/archive/refs/tags/$version.tar.gz"
     echo "== ci-bpm $version: $url_str"
     f=$TMP/bpm.tar.gz
-    curl -fL --retry 4 --retry-delay 10c -m 900 -o "$f" "$url_str"
+    curl -fL --retry 4 --retry-delay 10 -m 900 -o "$f" "$url_str"
     tar -xzf "$f" -C "$TMP"
     mkdir -p "$out"
     # absolute, the patch redirect must not be re-resolved after the cd
