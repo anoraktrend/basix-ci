@@ -8,9 +8,11 @@ license="GPL-3.0-or-later"
 dist_files="https://mirrors.kernel.org/gnu/gcc/gcc-16.1.0/gcc-16.1.0.tar.xz"
 checksum="5f001609f662143ce9285cd740bd0acfeeaf7f13731b46fd1d9ebe620c5c340d"
 depends="binutils gmp libmpc mpfr zlib"
-make_depends="binutils bison flex gmp libmpc mpfr zlib"
+make_depends="binutils gmp libmpc mpfr zlib"
+host_make_depends="bison flex"
 
-use_flags="-nls -bootstrap cxx"
+use_flags="nls bootstrap cxx"
+use_default="-nls +cxx"
 
 build_wrk_src="gcc-build"
 configure_script="../configure"
