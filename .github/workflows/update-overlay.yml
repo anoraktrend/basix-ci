@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync:
@@ -15,6 +16,10 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+
+      - name: Update submodules (bpm and basix-packages)
+        run: |
+          git submodule update --init --remote -- bpm basix-packages
 
       # 🟢 ADDED: Install dependency needed by mkoverlay.sh
       - name: Install b3sum if missing
@@ -29,16 +34,24 @@ jobs:
         run: |
           if ! ./mkoverlay.sh --check; then
             echo "Overlay is STALE. Running update..."
-            ./mkoverlay.sh --update || ./mkoverlay.sh
+            ./mkoverlay.sh
           else
             echo "Overlay is in sync."
           fi
 
       - name: Commit and Push Changes
+        id: auto-commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(ci): auto-update stale overlay dependencies [skip ci]"
-          file_pattern: 'overlay/ basix-packages/'
+          file_pattern: 'overlay/ basix-packages/ bpm/'
           commit_user_name: "github-actions[bot]"
           commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Trigger rootfs build
+        if: steps.auto-commit.outputs.changes_detected == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run build-rootfs.yml
 
