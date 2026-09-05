@@ -13,7 +13,7 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -41,7 +41,7 @@ jobs:
 
       - name: Commit and Push Changes
         id: auto-commit
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "chore(ci): auto-update stale overlay dependencies [skip ci]"
           file_pattern: 'overlay/ basix-packages/ bpm/'
