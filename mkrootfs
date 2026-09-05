@@ -5,7 +5,7 @@ set -eu
 : "${BPM:=bpm}"
 
 PKGS="baselayout musl busybox b3sum bzip2 xz pigz m4 flex bison make binutils
-      gmp mpfr libmpc gcc linux-headers certs openssl curl git bpm baseinit"
+      gmp mpfr libmpc gcc linux-headers certs libressl curl git bpm baseinit s6 s6-rc s6-linux-init"
 
 # installed before anything else so that the files they own are in place
 # before a package with system accounts can create /etc/passwd itself and get
@@ -109,114 +109,21 @@ case $ROOT in /*) ;; *) ROOT=$PWD/$ROOT ;; esac
 
 msg "assembling in $ROOT"
 
-# Resolve _bpm_libdir once for both BUILD=1 and BUILD=0 paths (DRY);
-# _bpm_dir is transient and must not leak into global state.
-_bpm_libdir=${BPM_LIBDIR:-}
-if [ -z "${_bpm_libdir:-}" ]; then
-    case "$BPM" in
-        */*) _bpm_dir=${BPM%/*}
-            if [ -d "$_bpm_dir/lib/style" ]; then _bpm_libdir=$_bpm_dir/lib
-            elif [ -d "$_bpm_dir/../lib/style" ]; then _bpm_libdir=$_bpm_dir/../lib
-            else _bpm_libdir=/usr/lib/bpm
-            fi
-            ;;
-        *) _bpm_libdir=/usr/lib/bpm ;;
-    esac
-    unset _bpm_dir
-fi
-
 if [ "$BUILD" = 1 ]; then
     msg "building any packages that are missing or stale"
     # deliberately with the hosts root, so that what is already installed here
     # is irrelevant to what gets built
-    # Enforce sandboxed builds: BPM_SANDBOX=0 clears BPM_BUILDROOT in
-    # bpm/lib/common.sh (host mode) and then execline fails because its
-    # make_depends (skalibs) is only cached, not installed. Force
-    # BPM_SANDBOX=1 and default BPM_BUILDROOT away from "/" to avoid
-    # polluting the host root with base/ and per-package overlay dirs.
-    : "${BPM_SANDBOX:=1}"
-    if [ "$BPM_SANDBOX" = 0 ]; then
-        warn "BPM_SANDBOX=0 inherited, forcing BPM_SANDBOX=1 for build"
-        BPM_SANDBOX=1
-    fi
-    : "${BPM_BUILDROOT:=/var/cache/bpm/buildroot}"
-    case "$BPM_BUILDROOT" in
-        ""|/) BPM_BUILDROOT=/var/cache/bpm/buildroot ;;
-    esac
-    # Bootstrap the build-root base in host mode if its binaries are missing.
-    # broot_require_base() (bpm/lib/common.sh + bpm/bpm) insists that every
-    # pkg in rdeps_closure($BPM_BASEPKGS) has a current binary package. With
-    # SANDBOX=1 the extracted previous rootfs has no /var/cache/bpm/bin
-    # cached, so that check would otherwise die with
-    #   "no current binary package for build root base: ..."
-    # Build the base once with BPM_BUILDROOT= (host mode) so the sandboxed
-    # build that follows has everything it needs. bpm skips already-current
-    # packages, so this is cheap when nothing is missing.
-    msg "ensuring build-root base binaries exist (host-mode bootstrap)"
-    _bpm_basepkgs=""
-    if [ -f "$_bpm_libdir/common.sh" ]; then
-        _bpm_basepkgs=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_USE="${BPM_USE:-}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c '. "$BPM_LIBDIR/common.sh"; config_load; printf "%s" "$BPM_BASEPKGS"' 2>/dev/null) || _bpm_basepkgs=""
-    fi
-    if [ -z "$_bpm_basepkgs" ] && [ -r "${BPM_CONF:-/etc/bpm/bpm.conf}" ]; then
-        _bpm_basepkgs=$(sed 's/#.*//' "${BPM_CONF:-/etc/bpm/bpm.conf}" | sed -n "s/^[^#]*BPM_BASEPKGS:=[[:space:]]*[\"']*//p" | sed "s/[\"']*[[:space:]]*}.*//;s/^[[:space:]]*//" | head -n1)
-    fi
-    if [ -z "$_bpm_basepkgs" ] && [ -r /etc/bpm/bpm.conf ]; then
-        _bpm_basepkgs=$(sed 's/#.*//' /etc/bpm/bpm.conf | sed -n "s/^[^#]*BPM_BASEPKGS:=[[:space:]]*[\"']*//p" | sed "s/[\"']*[[:space:]]*}.*//;s/^[[:space:]]*//" | head -n1)
-    fi
-    if [ -z "$_bpm_basepkgs" ]; then
-        _bpm_basepkgs="baselayout musl busybox make binutils gcc linux-headers pigz xz bzip2 certs pkgconf b3sum"
-    fi
-    # assumes mkrootfs runs inside chroot; host / == target root. For standalone use BPM_ROOT=$ROOT
-    # BPM_ROOT=/ is correct only when mkrootfs runs inside `sudo chroot $ROOT`
-    # (as CI does via `sudo chroot buildroot /ci/mkrootfs`).
-    # bootstrap host bin + install base into chroot before sandboxed build
     # shellcheck disable=SC2086
-    BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" build $_bpm_basepkgs || die "failed to bootstrap build-root base (host build of: $_bpm_basepkgs)"
-    # shellcheck disable=SC2086
-    BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" install $_bpm_basepkgs || die "failed to install build-root base into chroot (install of: $_bpm_basepkgs)"
-    # host base closure must exist as binaries before broot_require_base.
-    # BPM_BASEPKGS itself does not include its transitive runtime deps (e.g.
-    # via gcc -> gmp/mpfr/libmpc -> zlib). With SANDBOX=1 broot_require_base
-    # checks rdeps_closure(BPM_BASEPKGS) and dies if any member lacks a
-    # current binary. Compute the transitive closure dynamically (closure \\ base)
-    # and build+install only the extra members on the host so the later
-    # sandboxed build has everything it needs. Idempotent — bpm skips
-    # already-current packages.
-    set -f
-    _bpm_closure=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_USE="${BPM_USE:-}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c ". \"\$BPM_LIBDIR/common.sh\"; config_load; _norm_base=\$(printf \"%s\" \"\$BPM_BASEPKGS\" | tr -s ' \n\t' ' ' | sed \"s/^ *//;s/ *\$/\"); _all=\$(rdeps_closure \$BPM_BASEPKGS); for _p in \$_all; do case \" \$_norm_base \" in *\" \$_p \"*) ;; *) printf \"%s \" \"\$_p\";; esac; done") || { warn "failed to compute rdeps_closure for BPM_BASEPKGS"; _bpm_closure=""; }
-    set +f
-    # trim/normalize whitespace; keep set -eu safe (portable tr: ' \n\t' ordering works on BusyBox 1.36 and GNU)
-    _bpm_closure=$(printf '%s' "$_bpm_closure" | tr -s ' \n\t' ' ' | sed 's/^ *//;s/ *$//') || _bpm_closure=""
-    if [ -n "$_bpm_closure" ]; then
-        # shellcheck disable=SC2086
-        BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" build $_bpm_closure || die "failed to bootstrap base closure (host build of: $_bpm_closure)"
-        # shellcheck disable=SC2086
-        BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" install $_bpm_closure || die "failed to install base closure into chroot (host install of: $_bpm_closure)"
-    fi
-    sub "build-root base ready"
-    set -f
-    # shellcheck disable=SC2086
-    BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT="$BPM_BUILDROOT" BPM_ROOT=/ "$BPM" build $PKGS
-    set +f
+    BPM_ROOT=/ "$BPM" build $PKGS
 else
     # bpm install builds whatever it is missing, which -n exists to prevent, so
     # the closure has to be checked before a single package is installed
     msg "checking that every package already has a binary package"
     _missing=""
-    # rdeps_closure and tmpl_load are defined in bpm/lib/common.sh; closure/query
-    # are not defined helpers. Use rdeps_closure via common.sh for the runtime
-    # closure (mirrors broot_require_base / deps handling above). Keep set -eu
-    # safe with warn fallback and portable whitespace normalization.
-    set -f
     # shellcheck disable=SC2086
-    _closure=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_USE="${BPM_USE:-}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c '. "$BPM_LIBDIR/common.sh"; config_load; rdeps_closure "$@"' sh $PKGS) || { warn "failed to compute rdeps_closure for: $PKGS"; _closure="$PKGS"; }
-    set +f
-    _closure=$(printf '%s' "$_closure" | tr -s ' \n\t' ' ' | sed 's/^ *//;s/ *$//') || _closure="$PKGS"
-    # Resolve BPM_CACHE once via config_load so the glob matches bpm's layout.
-    _cache=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_USE="${BPM_USE:-}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c '. "$BPM_LIBDIR/common.sh"; config_load; printf "%s" "$BPM_CACHE"') || _cache="${BPM_CACHE:-/var/cache/bpm}"
-    for _p in $_closure; do
-        _v=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_USE="${BPM_USE:-}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c '. "$BPM_LIBDIR/common.sh"; config_load; tmpl_load "$1" >/dev/null; printf "%s-%s" "$version" "$revision"' sh "$_p") || { warn "failed to resolve version for $_p, skipping binary check"; continue; }
-        set -- "$_cache/bin/$_p@$_v".tar.*
+    for _p in $(closure $PKGS); do
+        _v=$(query "$_p" version)-$(query "$_p" revision)
+        set -- "$BPM_CACHE/bin/$_p@$_v".tar.*
         [ -f "$1" ] || _missing="$_missing $_p-$_v"
     done
     [ -z "$_missing" ] || die "no binary package for:$_missing"
@@ -236,25 +143,19 @@ install_pkgs() {
 
 _seed=""
 _rest=""
-set -f
 for _p in $PKGS; do
     _is_seed=0
     for _s in $SEED; do [ "$_p" = "$_s" ] && _is_seed=1; done
     if [ "$_is_seed" = 1 ]; then _seed="$_seed $_p"; else _rest="$_rest $_p"; fi
 done
-set +f
 
 if [ -n "$_seed" ]; then
     msg "installing the seed packages first:$_seed"
-    set -f
     # shellcheck disable=SC2086
     install_pkgs $_seed
-    set +f
 fi
-set -f
 # shellcheck disable=SC2086
 install_pkgs $_rest
-set +f
 
 _dev=$(find "$ROOT" \( -type c -o -type b \) -print 2>/dev/null | head -5)
 if [ -n "$_dev" ]; then
@@ -263,6 +164,28 @@ if [ -n "$_dev" ]; then
 fi
 
 [ -z "$HOSTNAME" ] || printf '%s\n' "$HOSTNAME" > "$ROOT/etc/hostname"
+
+# cleaning up all of the s6 database stuff so it'll be rebuilt by
+# the new system
+if [ -x "$ROOT/usr/lib/s6-rc/sync" ]; then
+    msg "regenerating the s6-rc repository inside $ROOT"
+    # resolved before the PATH= prefix below, which would otherwise be used to
+    # find chroot itself on the host
+    _chroot=$(command -v chroot) || die "chroot(1) not found"
+    rm -rf "$ROOT/var/lib/s6-rc/repository" \
+           "$ROOT/var/lib/s6-rc/stores.stamp" \
+           "$ROOT/etc/s6-rc/compiled"
+    PATH=/usr/bin:/bin "$_chroot" "$ROOT" /usr/lib/s6-rc/sync / ||
+        die "could not rebuild the s6-rc repository"
+
+    _s=$(readlink "$ROOT/var/lib/s6-rc/repository/stores/0000" 2>/dev/null || :)
+    [ "$_s" = /usr/share/s6-rc/sources ] ||
+        die "s6-rc store 0000 is $_s, expected /usr/share/s6-rc/sources"
+    _svc=$(PATH=/usr/bin:/bin "$_chroot" "$ROOT" \
+             s6-rc-set-status -r /var/lib/s6-rc/repository -L current | wc -l)
+    [ "$_svc" -gt 0 ] || die "s6-rc set current is empty"
+    sub "$_svc services in set current"
+fi
 
 # whatever the build left behind, the target has its own package database and
 rm -rf "$ROOT/var/cache/bpm/build" "$ROOT/var/cache/bpm/dest" \
