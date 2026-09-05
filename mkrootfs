@@ -109,6 +109,22 @@ case $ROOT in /*) ;; *) ROOT=$PWD/$ROOT ;; esac
 
 msg "assembling in $ROOT"
 
+# Resolve _bpm_libdir once for both BUILD=1 and BUILD=0 paths (DRY);
+# _bpm_dir is transient and must not leak into global state.
+_bpm_libdir=${BPM_LIBDIR:-}
+if [ -z "${_bpm_libdir:-}" ]; then
+    case "$BPM" in
+        */*) _bpm_dir=${BPM%/*}
+            if [ -d "$_bpm_dir/lib/style" ]; then _bpm_libdir=$_bpm_dir/lib
+            elif [ -d "$_bpm_dir/../lib/style" ]; then _bpm_libdir=$_bpm_dir/../lib
+            else _bpm_libdir=/usr/lib/bpm
+            fi
+            ;;
+        *) _bpm_libdir=/usr/lib/bpm ;;
+    esac
+    unset _bpm_dir
+fi
+
 if [ "$BUILD" = 1 ]; then
     msg "building any packages that are missing or stale"
     # deliberately with the hosts root, so that what is already installed here
@@ -138,18 +154,6 @@ if [ "$BUILD" = 1 ]; then
     # packages, so this is cheap when nothing is missing.
     msg "ensuring build-root base binaries exist (host-mode bootstrap)"
     _bpm_basepkgs=""
-    _bpm_libdir=${BPM_LIBDIR:-}
-    if [ -z "$_bpm_libdir" ]; then
-        case "$BPM" in
-            */*) _bpm_dir=${BPM%/*}
-                if [ -d "$_bpm_dir/lib/style" ]; then _bpm_libdir=$_bpm_dir/lib
-                elif [ -d "$_bpm_dir/../lib/style" ]; then _bpm_libdir=$_bpm_dir/../lib
-                else _bpm_libdir=/usr/lib/bpm
-                fi
-                ;;
-            *) _bpm_libdir=/usr/lib/bpm ;;
-        esac
-    fi
     if [ -f "$_bpm_libdir/common.sh" ]; then
         _bpm_basepkgs=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_USE="${BPM_USE:-}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c '. "$BPM_LIBDIR/common.sh"; config_load; printf "%s" "$BPM_BASEPKGS"' 2>/dev/null) || _bpm_basepkgs=""
     fi
@@ -170,30 +174,49 @@ if [ "$BUILD" = 1 ]; then
     BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" build $_bpm_basepkgs || die "failed to bootstrap build-root base (host build of: $_bpm_basepkgs)"
     # shellcheck disable=SC2086
     BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" install $_bpm_basepkgs || die "failed to install build-root base into chroot (install of: $_bpm_basepkgs)"
-    # host base closure libs must exist as binaries before broot_require_base
-    # BPM_BASEPKGS itself does not include zlib/gmp/mpfr/libmpc, but its
-    # rdeps_closure does (via gcc -> gmp/mpfr/libmpc -> zlib). With SANDBOX=1
-    # broot_require_base checks rdeps_closure(BPM_BASEPKGS) and dies if any
-    # member lacks a current binary. Build+install the closure explicitly on
-    # the host so the later sandboxed build has everything it needs. Kept
-    # separate from $_bpm_basepkgs so future base drift is still covered; bpm
-    # skips already-current packages so this is idempotent and cheap.
-    # shellcheck disable=SC2086
-    BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" build zlib gmp mpfr libmpc || die "failed to bootstrap build-root base closure (host build of: zlib gmp mpfr libmpc)"
-    # shellcheck disable=SC2086
-    BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" install zlib gmp mpfr libmpc || die "failed to install build-root base closure into chroot (install of: zlib gmp mpfr libmpc)"
+    # host base closure must exist as binaries before broot_require_base.
+    # BPM_BASEPKGS itself does not include its transitive runtime deps (e.g.
+    # via gcc -> gmp/mpfr/libmpc -> zlib). With SANDBOX=1 broot_require_base
+    # checks rdeps_closure(BPM_BASEPKGS) and dies if any member lacks a
+    # current binary. Compute the transitive closure dynamically (closure \\ base)
+    # and build+install only the extra members on the host so the later
+    # sandboxed build has everything it needs. Idempotent — bpm skips
+    # already-current packages.
+    set -f
+    _bpm_closure=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_USE="${BPM_USE:-}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c ". \"\$BPM_LIBDIR/common.sh\"; config_load; _norm_base=\$(printf \"%s\" \"\$BPM_BASEPKGS\" | tr -s ' \n\t' ' ' | sed \"s/^ *//;s/ *\$/\"); _all=\$(rdeps_closure \$BPM_BASEPKGS); for _p in \$_all; do case \" \$_norm_base \" in *\" \$_p \"*) ;; *) printf \"%s \" \"\$_p\";; esac; done") || { warn "failed to compute rdeps_closure for BPM_BASEPKGS"; _bpm_closure=""; }
+    set +f
+    # trim/normalize whitespace; keep set -eu safe (portable tr: ' \n\t' ordering works on BusyBox 1.36 and GNU)
+    _bpm_closure=$(printf '%s' "$_bpm_closure" | tr -s ' \n\t' ' ' | sed 's/^ *//;s/ *$//') || _bpm_closure=""
+    if [ -n "$_bpm_closure" ]; then
+        # shellcheck disable=SC2086
+        BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" build $_bpm_closure || die "failed to bootstrap base closure (host build of: $_bpm_closure)"
+        # shellcheck disable=SC2086
+        BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" install $_bpm_closure || die "failed to install base closure into chroot (host install of: $_bpm_closure)"
+    fi
     sub "build-root base ready"
+    set -f
     # shellcheck disable=SC2086
     BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT="$BPM_BUILDROOT" BPM_ROOT=/ "$BPM" build $PKGS
+    set +f
 else
     # bpm install builds whatever it is missing, which -n exists to prevent, so
     # the closure has to be checked before a single package is installed
     msg "checking that every package already has a binary package"
     _missing=""
+    # rdeps_closure and tmpl_load are defined in bpm/lib/common.sh; closure/query
+    # are not defined helpers. Use rdeps_closure via common.sh for the runtime
+    # closure (mirrors broot_require_base / deps handling above). Keep set -eu
+    # safe with warn fallback and portable whitespace normalization.
+    set -f
     # shellcheck disable=SC2086
-    for _p in $(closure $PKGS); do
-        _v=$(query "$_p" version)-$(query "$_p" revision)
-        set -- "$BPM_CACHE/bin/$_p@$_v".tar.*
+    _closure=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_USE="${BPM_USE:-}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c '. "$BPM_LIBDIR/common.sh"; config_load; rdeps_closure "$@"' sh $PKGS) || { warn "failed to compute rdeps_closure for: $PKGS"; _closure="$PKGS"; }
+    set +f
+    _closure=$(printf '%s' "$_closure" | tr -s ' \n\t' ' ' | sed 's/^ *//;s/ *$//') || _closure="$PKGS"
+    # Resolve BPM_CACHE once via config_load so the glob matches bpm's layout.
+    _cache=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_USE="${BPM_USE:-}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c '. "$BPM_LIBDIR/common.sh"; config_load; printf "%s" "$BPM_CACHE"') || _cache="${BPM_CACHE:-/var/cache/bpm}"
+    for _p in $_closure; do
+        _v=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_USE="${BPM_USE:-}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c '. "$BPM_LIBDIR/common.sh"; config_load; tmpl_load "$1" >/dev/null; printf "%s-%s" "$version" "$revision"' sh "$_p") || { warn "failed to resolve version for $_p, skipping binary check"; continue; }
+        set -- "$_cache/bin/$_p@$_v".tar.*
         [ -f "$1" ] || _missing="$_missing $_p-$_v"
     done
     [ -z "$_missing" ] || die "no binary package for:$_missing"
@@ -213,19 +236,25 @@ install_pkgs() {
 
 _seed=""
 _rest=""
+set -f
 for _p in $PKGS; do
     _is_seed=0
     for _s in $SEED; do [ "$_p" = "$_s" ] && _is_seed=1; done
     if [ "$_is_seed" = 1 ]; then _seed="$_seed $_p"; else _rest="$_rest $_p"; fi
 done
+set +f
 
 if [ -n "$_seed" ]; then
     msg "installing the seed packages first:$_seed"
+    set -f
     # shellcheck disable=SC2086
     install_pkgs $_seed
+    set +f
 fi
+set -f
 # shellcheck disable=SC2086
 install_pkgs $_rest
+set +f
 
 _dev=$(find "$ROOT" \( -type c -o -type b \) -print 2>/dev/null | head -5)
 if [ -n "$_dev" ]; then
