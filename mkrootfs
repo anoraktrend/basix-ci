@@ -170,6 +170,18 @@ if [ "$BUILD" = 1 ]; then
     BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" build $_bpm_basepkgs || die "failed to bootstrap build-root base (host build of: $_bpm_basepkgs)"
     # shellcheck disable=SC2086
     BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" install $_bpm_basepkgs || die "failed to install build-root base into chroot (install of: $_bpm_basepkgs)"
+    # host base closure libs must exist as binaries before broot_require_base
+    # BPM_BASEPKGS itself does not include zlib/gmp/mpfr/libmpc, but its
+    # rdeps_closure does (via gcc -> gmp/mpfr/libmpc -> zlib). With SANDBOX=1
+    # broot_require_base checks rdeps_closure(BPM_BASEPKGS) and dies if any
+    # member lacks a current binary. Build+install the closure explicitly on
+    # the host so the later sandboxed build has everything it needs. Kept
+    # separate from $_bpm_basepkgs so future base drift is still covered; bpm
+    # skips already-current packages so this is idempotent and cheap.
+    # shellcheck disable=SC2086
+    BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" build zlib gmp mpfr libmpc || die "failed to bootstrap build-root base closure (host build of: zlib gmp mpfr libmpc)"
+    # shellcheck disable=SC2086
+    BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" install zlib gmp mpfr libmpc || die "failed to install build-root base closure into chroot (install of: zlib gmp mpfr libmpc)"
     sub "build-root base ready"
     # shellcheck disable=SC2086
     BPM_USE="${BPM_USE:-}" BPM_REPOS="${BPM_REPOS:-}" BPM_CONF="${BPM_CONF:-}" BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT="$BPM_BUILDROOT" BPM_ROOT=/ "$BPM" build $PKGS
