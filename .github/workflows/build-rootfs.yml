@@ -160,56 +160,64 @@ jobs:
             basix-rootfs-*.tar.gz
             basix-rootfs-*.tar.gz.b3
             basix-rootfs-*.tar.gz.packages
-
+            
       - name: Publish to CDN (S3-compatible)
         if: env.S3_ENDPOINT != ''
         run: |
           date=$(date -u +%Y%m%d)
           dir=$(date -u +%Y-%m-%d)
+          
           aws s3 cp --only-show-errors --content-type application/gzip \
             "basix-rootfs-$date.tar.gz" \
             "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz"
+            
           aws s3 cp --only-show-errors \
             "basix-rootfs-$date.tar.gz.b3" \
             "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.b3"
+            
           aws s3 cp --only-show-errors --content-type text/plain \
             "basix-rootfs-$date.tar.gz.packages" \
             "s3://$S3_BUCKET/basix/$dir/basix-rootfs-$date.tar.gz.packages"
+            
           printf 'basix/%s/basix-rootfs-%s.tar.gz\n' "$dir" "$date" | \
             aws s3 cp --only-show-errors --content-type text/plain - \
             "s3://$S3_BUCKET/basix/latest-version"
-          # Create a "latest" redirect link
-          echo "<html><head><meta http-equiv=\"refresh\" content=\"0; url=https://cdn.helltop.net/basix/$dir/index.html\" /></head></html>" | \
-            aws s3 cp --only-show-errors --content-type text/html - \
-            "s3://$S3_BUCKET/basix/latest/index.html"
-      
-          # Generate an index.html file for the published folder
+
           cat <<EOF > index.html
           <!DOCTYPE html>
-          <html>
+          <html lang="en">
           <head>
-          <title>Basix RootFS - $dir</title>
-          <style>
-          body { font-family: Arial, sans-serif; margin: 20px; }
-          h1 { color: #333; }
-          ul { list-style-type: none; padding: 0; }
-          li { margin: 10px 0; }
-          a { color: #0066cc; text-decoration: none; }
-          a:hover { text-decoration: underline; }
-          </style>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Index of /basix/$dir/</title>
+              <style>
+                  :root { --bg-color: #0b0f19; --card-bg: rgba(17, 24, 39, 0.7); --text-color: #e5e7eb; --accent-color: #38bdf8; --border-color: rgba(56, 189, 248, 0.2); }
+                  body { font-family: system-ui, sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 2rem; background-image: radial-gradient(circle at 50% 0%, #1e1b4b 0%, var(--bg-color) 70%); min-height: 100vh; }
+                  .container { max-width: 800px; margin: 0 auto; background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--border-color); border-radius: 12px; padding: 2rem; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); }
+                  h1 { font-size: 1.5rem; margin-top: 0; border-bottom: 1px solid var(--border-color); padding-bottom: 1rem; color: var(--accent-color); }
+                  ul { list-style: none; padding: 0; margin: 0; }
+                  li { padding: 0.75rem 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+                  li:last-child { border-bottom: none; }
+                  a { color: var(--text-color); text-decoration: none; display: flex; align-items: center; gap: 0.5rem; transition: color 0.2s; }
+                  a:hover { color: var(--accent-color); }
+              </style>
           </head>
           <body>
-          <h1>Basix RootFS - $dir</h1>
-          <p>Download the latest rootfs artifacts:</p>
-          <ul>
-          <li><a href="basix-rootfs-$date.tar.gz">basix-rootfs-$date.tar.gz</a> (RootFS Tarball)</li>
-          <li><a href="basix-rootfs-$date.tar.gz.b3">basix-rootfs-$date.tar.gz.b3</a> (B3 Checksum)</li>
-          <li><a href="basix-rootfs-$date.tar.gz.packages">basix-rootfs-$date.tar.gz.packages</a> (Package List)</li>
-          </ul>
+              <div class="container">
+                  <h1>Index of /basix/$dir/</h1>
+                  <ul>
+                      <li><a href="../">📁 ../</a></li>
+                      <li><a href="basix-rootfs-$date.tar.gz">📄 basix-rootfs-$date.tar.gz</a></li>
+                      <li><a href="basix-rootfs-$date.tar.gz.b3">📄 basix-rootfs-$date.tar.gz.b3</a></li>
+                      <li><a href="basix-rootfs-$date.tar.gz.packages">📄 basix-rootfs-$date.tar.gz.packages</a></li>
+                  </ul>
+              </div>
           </body>
           </html>
           EOF
-          
-          # Upload index.html to S3 folder context
-          aws s3 cp --only-show-errors --content-type text/html index.html "s3://$S3_BUCKET/basix/$dir/index.html"
+
+          aws s3 cp --only-show-errors --content-type text/html index.html \
+            "s3://$S3_BUCKET/basix/$dir/index.html"
+      
+
 
