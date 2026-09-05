@@ -218,6 +218,15 @@ jobs:
 
           aws s3 cp --only-show-errors --content-type text/html index.html \
             "s3://$S3_BUCKET/basix/$dir/index.html"
-      
-
-
+            
+          aws s3 cp --only-show-errors --content-type application/gzip \
+            "basix-rootfs-$date.tar.gz" \
+            "s3://$S3_BUCKET/basix/latest/basix-rootfs-latest.tar.gz"
+            
+          aws s3 cp --only-show-errors \
+            "basix-rootfs-$date.tar.gz.b3" \
+            "s3://$S3_BUCKET/basix/latest/basix-rootfs-latest.tar.gz.b3"
+            
+          aws s3 cp --only-show-errors --content-type text/plain \
+            "basix-rootfs-$date.tar.gz.packages" \
+            "s3://$S3_BUCKET/basix/latest/basix-rootfs-latest.tar.gz.packages"
