@@ -113,8 +113,22 @@ if [ "$BUILD" = 1 ]; then
     msg "building any packages that are missing or stale"
     # deliberately with the hosts root, so that what is already installed here
     # is irrelevant to what gets built
+    # Enforce sandboxed builds: BPM_SANDBOX=0 clears BPM_BUILDROOT in
+    # bpm/lib/common.sh (host mode) and then execline fails because its
+    # make_depends (skalibs) is only cached, not installed. Force
+    # BPM_SANDBOX=1 and default BPM_BUILDROOT away from "/" to avoid
+    # polluting the host root with base/ and per-package overlay dirs.
+    : "${BPM_SANDBOX:=1}"
+    if [ "$BPM_SANDBOX" = 0 ]; then
+        warn "BPM_SANDBOX=0 inherited, forcing BPM_SANDBOX=1 for build"
+        BPM_SANDBOX=1
+    fi
+    : "${BPM_BUILDROOT:=/var/cache/bpm/buildroot}"
+    case "$BPM_BUILDROOT" in
+        ""|/) BPM_BUILDROOT=/var/cache/bpm/buildroot ;;
+    esac
     # shellcheck disable=SC2086
-    BPM_ROOT=/ "$BPM" build $PKGS
+    BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT="$BPM_BUILDROOT" BPM_ROOT=/ "$BPM" build $PKGS
 else
     # bpm install builds whatever it is missing, which -n exists to prevent, so
     # the closure has to be checked before a single package is installed
