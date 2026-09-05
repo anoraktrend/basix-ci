@@ -127,6 +127,44 @@ if [ "$BUILD" = 1 ]; then
     case "$BPM_BUILDROOT" in
         ""|/) BPM_BUILDROOT=/var/cache/bpm/buildroot ;;
     esac
+    # Bootstrap the build-root base in host mode if its binaries are missing.
+    # broot_require_base() (bpm/lib/common.sh + bpm/bpm) insists that every
+    # pkg in rdeps_closure($BPM_BASEPKGS) has a current binary package. With
+    # SANDBOX=1 the extracted previous rootfs has no /var/cache/bpm/bin
+    # cached, so that check would otherwise die with
+    #   "no current binary package for build root base: ..."
+    # Build the base once with BPM_BUILDROOT= (host mode) so the sandboxed
+    # build that follows has everything it needs. bpm skips already-current
+    # packages, so this is cheap when nothing is missing.
+    msg "ensuring build-root base binaries exist (host-mode bootstrap)"
+    _bpm_basepkgs=""
+    _bpm_libdir=${BPM_LIBDIR:-}
+    if [ -z "$_bpm_libdir" ]; then
+        case "$BPM" in
+            */*) _bpm_dir=${BPM%/*}
+                if [ -d "$_bpm_dir/lib/style" ]; then _bpm_libdir=$_bpm_dir/lib
+                elif [ -d "$_bpm_dir/../lib/style" ]; then _bpm_libdir=$_bpm_dir/../lib
+                else _bpm_libdir=/usr/lib/bpm
+                fi
+                ;;
+            *) _bpm_libdir=/usr/lib/bpm ;;
+        esac
+    fi
+    if [ -f "$_bpm_libdir/common.sh" ]; then
+        _bpm_basepkgs=$(BPM_LIBDIR="$_bpm_libdir" BPM_CONF="${BPM_CONF:-/etc/bpm/bpm.conf}" BPM_ROOT=/ BPM_REPOS="${BPM_REPOS:-}" sh -c '. "$BPM_LIBDIR/common.sh"; config_load; printf "%s" "$BPM_BASEPKGS"' 2>/dev/null) || _bpm_basepkgs=""
+    fi
+    if [ -z "$_bpm_basepkgs" ] && [ -r "${BPM_CONF:-/etc/bpm/bpm.conf}" ]; then
+        _bpm_basepkgs=$(sed -n 's/.*BPM_BASEPKGS:=[[:space:]]*//p' "${BPM_CONF:-/etc/bpm/bpm.conf}" | tr -d '"' | tr -d "'" | tr -d '}' | head -n1)
+    fi
+    if [ -z "$_bpm_basepkgs" ] && [ -r /etc/bpm/bpm.conf ]; then
+        _bpm_basepkgs=$(sed -n 's/.*BPM_BASEPKGS:=[[:space:]]*//p' /etc/bpm/bpm.conf | tr -d '"' | tr -d "'" | tr -d '}' | head -n1)
+    fi
+    if [ -z "$_bpm_basepkgs" ]; then
+        _bpm_basepkgs="baselayout musl busybox make binutils gcc linux-headers pigz xz bzip2 certs pkgconf b3sum zstd"
+    fi
+    # shellcheck disable=SC2086
+    BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT= BPM_ROOT=/ "$BPM" build $_bpm_basepkgs || die "failed to bootstrap build-root base (host build of: $_bpm_basepkgs)"
+    sub "build-root base ready"
     # shellcheck disable=SC2086
     BPM_SANDBOX="$BPM_SANDBOX" BPM_BUILDROOT="$BPM_BUILDROOT" BPM_ROOT=/ "$BPM" build $PKGS
 else
