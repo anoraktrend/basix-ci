@@ -62,7 +62,7 @@ jobs:
 
       - name: Create "latest" redirect in CDN
         run: |
-          cat <<EOF > index.html
+          cat <<EOF > latest-index.html
           <!DOCTYPE html>
           <html lang="en">
           <head>
