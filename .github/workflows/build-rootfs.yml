@@ -141,7 +141,7 @@ jobs:
             BPM=/ci/bpm-patched/bpm \
             BPM_SANDBOX=0 \
             BPM_BUILDROOT= \
-            bpm -i baselayout musl busybox b3sum bzip2 xz pigz m4 flex bison \
+            bpm i baselayout musl busybox b3sum bzip2 xz pigz m4 flex bison \
             make binutils gmp mpfr libmpc gcc linux-headers certs libressl \
             curl git bpm baseinit s6 s6-rc s6-linux-init
           d=$(date -u +%Y%m%d)
