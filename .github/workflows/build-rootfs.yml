@@ -121,13 +121,6 @@ jobs:
           restore-keys: |
             bpm-src-v3-
 
-      - name: Materialize patched bpm for the build
-        run: |
-          # upstream bpm tag + patches/bpm-common.sh.patch (cached-source
-          # self-heal); run in place via BPM=, so the rootfs bpm package
-          # itself stays pristine upstream
-          sudo ./mkoverlay.sh --ci-bpm buildroot/ci/bpm-patched
-
       - name: Build new rootfs with mkrootfs
         run: |
           # self-bind so / is a mountpoint and unshare can set propagation
