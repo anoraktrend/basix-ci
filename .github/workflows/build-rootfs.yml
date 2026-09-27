@@ -135,6 +135,7 @@ jobs:
             BPM_BUILDROOT= \
             bpm i baselayout musl busybox b3sum bzip2 xz pigz m4 flex bison \
             make binutils gmp mpfr libmpc gcc linux-headers certs libressl
+            BPM_REPOS="/ci/overlay /ci/basix-packages" \
             bpm i curl git bpm baseinit s6 s6-rc s6-linux-init
           d=$(date -u +%Y%m%d)
           # the date is evaluated inside the chroot: the outer $d is not in
