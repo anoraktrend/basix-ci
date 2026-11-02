@@ -9,6 +9,11 @@
 # bytes downloaded. Run after updating basix-packages, or --check to verify
 # the committed overlay is still in sync.
 #
+# Upstream may use a flat layout (pkg/template) or a ports layout
+# (category/pkg/template), so package dirs are found the same way bpm finds
+# them. The overlay itself stays flat: bpm checks flat paths first, so a flat
+# overlay still shadows the upstream package.
+#
 set -eu
 
 BROOT=${BROOT:-$(dirname "$0")/basix-packages}
@@ -16,7 +21,8 @@ ODIR=${ODIR:-$(dirname "$0")/overlay}
 TMP=${TMP:-$(mktemp -d)}
 export TMP
 trap 'rm -rf "$TMP"' EXIT
-# absolute, since the bpm patch is applied from inside a subshell that cd's
+# absolute, so the paths keep working regardless of where the script is run
+# from
 case $BROOT in /*) ;; *) BROOT=$PWD/$BROOT ;; esac
 case $ODIR in /*) ;; *) ODIR=$PWD/$ODIR ;; esac
 
@@ -27,8 +33,9 @@ case $ODIR in /*) ;; *) ODIR=$PWD/$ODIR ;; esac
 # fast nearby host.
 #
 # bpm itself is not overlaid: the rootfs ships the pristine upstream package.
-# The CI runs on a patched build of it instead, generated separately with
-# --ci-bpm (patches/bpm-common.sh.patch applied on top of the upstream tag).
+# The CI runs the current upstream bpm instead, materialized separately with
+# --ci-bpm (the previous rootfs may ship an older bpm that does not know about
+# the ports layout).
 PATCHES="\
 gcc|https://mirrors.kernel.org/gnu/gcc/gcc-\${version}/gcc-\${version}.tar.xz
 binutils|https://mirrors.kernel.org/gnu/binutils/binutils-\${version}.tar.xz
@@ -42,11 +49,24 @@ zlib|https://zlib.net/zlib-\${version}.tar.gz
 pigz|https://zlib.net/pigz/pigz-\${version}.tar.gz
 musl|https://git.musl-libc.org/cgit/musl/snapshot/musl-\${version}.tar.gz"
 
+# print the directory holding <pkg> in repo <root>, matching bpm's lookup
+# order: flat (repo/pkg) or ports layout up to two levels deep
+# (repo/category/pkg), shallowest wins
+pkg_find() {
+    for _d in "$1/$2" "$1"/*/"$2" "$1"/*/*/"$2"; do
+        [ -f "$_d/template" ] && { printf '%s\n' "$_d"; return 0; }
+    done
+    return 1
+}
+
 check_sync() {
     dir=$1
     for line in $PATCHES; do
         pkg=${line%%|*}; [ -n "$pkg" ] || continue
-        up=$BROOT/$pkg/template; ov=$dir/$pkg/template
+        if ! upd=$(pkg_find "$BROOT" "$pkg"); then
+            echo "STALE: $pkg not in upstream repository"; return 1
+        fi
+        up=$upd/template; ov=$dir/$pkg/template
         if [ ! -f "$ov" ]; then
             echo "STALE: $pkg not in overlay"; return 1
         fi
@@ -57,6 +77,14 @@ check_sync() {
                 return 1
             fi
         done
+        # everything except the mirror-specific fields must match upstream, so
+        # flag/dependency/function changes are picked up even without a bump
+        _u=$(awk '/^dist_files=/ {next} /^checksum=/ {next} {print}' "$up")
+        _o=$(awk '/^dist_files=/ {next} /^checksum=/ {next} {print}' "$ov")
+        if [ "$_u" != "$_o" ]; then
+            echo "STALE: $pkg template differs from upstream"
+            return 1
+        fi
         grep -qE '^checksum=' "$ov" || { echo "STALE: $pkg missing checksum"; return 1; }
         _df=$(grep -E '^dist_files=' "$ov" | tail -1 | sed 's/^dist_files="//;s/"$//')
         case $_df in
@@ -65,14 +93,18 @@ check_sync() {
                 echo "STALE: $pkg dist_files has no archive extension (bpm would cp it raw): $_df"
                 return 1 ;;
         esac
-        if [ -d "$BROOT/$pkg/files" ] && [ ! -d "$dir/$pkg/files" ]; then
-            echo "STALE: $pkg missing files/ (FILESDIR would be empty)"
-            return 1
-        fi
+        for sub in files patches; do
+            if [ -d "$upd/$sub" ] && [ ! -d "$dir/$pkg/$sub" ]; then
+                echo "STALE: $pkg missing $sub/ (the overlay shadows it)"
+                return 1
+            fi
+            if [ ! -d "$upd/$sub" ] && [ -d "$dir/$pkg/$sub" ]; then
+                echo "STALE: $pkg has stale $sub/ not in upstream"
+                return 1
+            fi
+        done
         echo "ok: $pkg"
     done
-    [ -f "$(dirname "$0")/patches/bpm-common.sh.patch" ] || {
-        echo "STALE: patches/bpm-common.sh.patch missing"; return 1; }
     return 0
 }
 
@@ -80,8 +112,9 @@ gen() {
     for line in $PATCHES; do
         pkg=${line%%|*}; url=${line#*|}
         [ -n "$pkg" ] || continue
-        up=$BROOT/$pkg/template
-        [ -f "$up" ] || { echo "no upstream template for $pkg"; exit 1; }
+        upd=$(pkg_find "$BROOT" "$pkg") ||
+            { echo "no upstream package for $pkg"; exit 1; }
+        up=$upd/template
         version=$(grep -E '^version=' "$up" | tail -1 | cut -d= -f2)
         eval "url_str=\"$url\""
         echo "== $pkg $version: $url_str"
@@ -95,22 +128,26 @@ gen() {
             { print }
         ' "$up" > "$ODIR/$pkg/template"
         # the overlay shadows the package dir wholesale, so templates whose
-        # build needs $FILESDIR get the upstream files/ copied along
-        if [ -d "$BROOT/$pkg/files" ]; then
-            rm -rf "$ODIR/$pkg/files"
-            cp -R "$BROOT/$pkg/files" "$ODIR/$pkg/files"
-        fi
+        # build needs $FILESDIR or $PATCHESDIR get those copied along
+        for sub in files patches; do
+            if [ -d "$upd/$sub" ]; then
+                rm -rf "$ODIR/$pkg/$sub"
+                cp -R "$upd/$sub" "$ODIR/$pkg/$sub"
+            else
+                rm -rf "$ODIR/$pkg/$sub"
+            fi
+        done
     done
 }
 
-# --ci-bpm <dir> - materialize a patched bpm tree for the CI to run the build
-# with. The rootfs itself keeps the pristine upstream bpm package; only the
-# build is driven by this one. The patch (patches/bpm-common.sh.patch, the
-# cached-source self-heal) is applied on top of the upstream tag tarball, so
-# it fails loud if upstream drifts.
+# --ci-bpm <dir> - materialize the upstream bpm tree for the CI to run the
+# build with. The rootfs itself keeps the pristine upstream bpm package; only
+# the build is driven by this one, because the rootfs we start from ships an
+# older bpm that does not understand the current repository layout.
 ci_bpm() {
     out=$1
-    up=$BROOT/bpm/template
+    upd=$(pkg_find "$BROOT" bpm) || { echo "no upstream package for bpm"; exit 1; }
+    up=$upd/template
     version=$(grep -E '^version=' "$up" | tail -1 | cut -d= -f2)
     url_str="https://github.com/kkrruumm/bpm/archive/refs/tags/$version.tar.gz"
     echo "== ci-bpm $version: $url_str"
@@ -118,9 +155,6 @@ ci_bpm() {
     curl -fL --retry 4 --retry-delay 10 -m 900 -o "$f" "$url_str"
     tar -xzf "$f" -C "$TMP"
     mkdir -p "$out"
-    # absolute, the patch redirect must not be re-resolved after the cd
-    _patch=$(cd "$(dirname "$0")" && pwd)/patches/bpm-common.sh.patch
-    ( cd "$TMP/bpm-$version" && patch -s -p1 < "$_patch" )
     cp -R "$TMP/bpm-$version/." "$out/"
     [ -f "$out/bpm" ] && [ -d "$out/lib/style" ] || {
         echo "ci-bpm tree incomplete in $out"; exit 1; }
